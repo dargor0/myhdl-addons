@@ -5,7 +5,7 @@ as described in the User Guide:
 
 http://ghdl.free.fr/site/uploads/Main/ghdl_user_guide/Interfacing-to-other-languages.html
 
-Use entity "myhdl_ghdl_core" in myhdl_ghdl_core.vhdl to write a testbench 
+Use entity "myhdl_ghdl_core" in <myhdl_ghdl_core.vhdl> to write a testbench 
 to connect with MyHDL. The testbench must define the following generics:
 
 * C_FROM_WIDTH : Total number of bits for signals driven by MyHDL
@@ -15,9 +15,9 @@ to connect with MyHDL. The testbench must define the following generics:
 * C_FROM_SIGINFO : List of space separated values with the signal descriptions 
                    driven by MyHDL. Must follow format
                    <signal_name> <bit_width>
-                   signal_name is the same name used in MyHDL
+                   with "signal_name" being the same name used in MyHDL
 * C_TO_SIGINFO   : List of space separated values with the signal descriptions 
-                   read by MyHDL.
+                   read by MyHDL. Same format as before.
                    
 Testbench must use the following signals:
 
@@ -26,9 +26,13 @@ Testbench must use the following signals:
 * From_sigvector : All signals driven by MyHDL concatenated in a single signal 
                    following the same order in C_FROM_SIGINFO
                    
-Keep track of the signals descriptions when mapping 
+Keep track of the signals descriptions when mapping signals from myhdl_ghdl_core
+to your testbench. Order and bit-order (msb downto lsb in bit_vectors) are 
+important.
 
 Cosimulation for GHDL is based on icarus cosimulation code, relying on 
-Unix-style pipes IPC. Initial support for sockets IPC is available.
+Unix-style pipes IPC. Sockets IPC (UNIX, IPv4 and IPv6) are also available.
 
 Test is available on the "test" subdirectory, just run "python test_all.py".
+
+ghdl_env downloaded from http://ygdes.com/GHDL/ghdl_env/

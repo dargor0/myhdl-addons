@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 #  This file is part of the myhdl library, a Python package for using
 #  Python as a Hardware Description Language.
 #
@@ -28,8 +29,9 @@ vhdl_srcroute = "../../test/vhdl"
 
 import test_bin2gray, test_inc, test_dff
 
-modules = (test_bin2gray,  )
+#modules = (test_bin2gray,  )
 #modules = (test_bin2gray, test_inc, test_dff )
+modules = (test_inc, test_dff )
 
 import unittest
 

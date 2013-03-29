@@ -1,7 +1,5 @@
 # makefile for GHDL
 
-# ghdl_env downloaded from http://ygdes.com/GHDL/ghdl_env/
-
 CC=gcc
 GHDL=ghdl
 CFLAGS=-Wall -g -I.
@@ -16,7 +14,7 @@ GHDL_LINK=-Wl,myhdl_ghdl_vhpi.o -Wl,ghdl_env_c.o
 # predefined rules
 .PHONY : all clean
 
-all: myhdl_ghdl_core.o ghdl_env_c.o ghdl_env.o
+all: myhdl_ghdl_core.o myhdl_ghdl_vhpi.o ghdl_env_c.o ghdl_env.o
 
 # myhdl_ghdl_vhpi.so: myhdl_ghdl_vhpi.o
 # 	$(CC) --shared -Wl,-soname,$(MYHDLVPI).so -o $@ $^

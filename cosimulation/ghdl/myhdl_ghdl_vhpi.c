@@ -1,51 +1,24 @@
 /*
  GHDL VHPI interface for MyHDL
  
- Custom interface format:
- 
- client->server:
- [<command>] <time> <arg1> ... <arg-n>\n
- 
- server->client
- [<response>] <time> <arg1> ... <arg-n>\n
+ Author:  Oscar Diaz <oscar.dc0@gmail.com>
+ Date:    16-02-2013
 
- Example
-wpipe>FROM 0 B 2
-rpipe<OK
->TO 0 G 2 
-<OK
->>>START 
-<OK 
->>>0 
-<0 
->>>0 
-<0 0
->>>0 G 0 
-<0
->>>0 
-<10
->>>10 
-<10
->>>10 <<< 
-<10<<< 
->>>10 <<< 
-<10 1<<< 
->>>10 G 1 <<< 
-<10<<< 
->>>10 <<< 
-<20<<< 
->>>20 <<< 
-<20<<< 
->>>20 <<< 
-<20 2<<< 
->>>20 G 3 <<< 
-<20<<< 
+ This code is free software; you can redistribute it and/or
+ modify it under the terms of the GNU Lesser General Public
+ License as published by the Free Software Foundation; either
+ version 3 of the License, or (at your option) any later version.
 
-    FROM => output to MyHDL module, input to VHDL stub
-    TO => input to MyHDL module, output to VHDL stub
+ This code is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ Lesser General Public License for more details.
+
+ You should have received a copy of the GNU Lesser General Public
+ License along with this package; if not, see 
+ <http://www.gnu.org/licenses/>.
  
  */
-
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -56,15 +29,23 @@ rpipe<OK
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <linux/un.h>
+#include <netinet/ip.h>
+#include <netdb.h>
 
-//#define USE_SOCKETS 1
+//#define VHPI_DEBUG 1
+//#define VHPI_GDBWAIT 1
 
+#ifdef VHPI_DEBUG
+#define d_perror(x) perror(x)
+#define debug(...)  printf(__VA_ARGS__)
+#else
+#define d_perror(x)
+#define debug(...)
+#endif
+
+// bit masks for sigentry.flags
 #define FLAG_HAS_CHANGED 0x1
 #define FLAG_INITIAL_VAL 0x2
-
-#define MAX_STRING 256
-#define d_perror perror
-#define debug printf
 
 // codes for update_signal return value
 #define UPDATE_ERROR -1 
@@ -73,12 +54,13 @@ rpipe<OK
 #define UPDATE_TIME   2 // next update will be at a time delay
 #define UPDATE_DELTA  3 // next update need a delta step
 
+#define MAX_STRING 256
+
 // static info
-static int open_sockfd = -1;
-static char socket_path[MAX_STRING];
-static int init_pipes_flag = 0;
-static int rpipe;
-static int wpipe;
+static int init_connection_flag = 0;
+static int conn_sockfd = -1;
+static int rpipe = 0;
+static int wpipe = 0;
 
 static char cosim_from_signals[MAX_STRING];
 static char cosim_to_signals[MAX_STRING];
@@ -88,6 +70,24 @@ static uint64_t vhdl_time_res = 0;
 static uint64_t vhdl_curtime = 0;
 static uint64_t myhdl_curtime = 0;
 static uint64_t myhdl_next_trigger = 0;
+
+// string object from GHDL
+struct int_bounds {
+  int left;
+  int right;
+  char dir;
+  unsigned int len;
+};
+
+typedef struct ghdl_string_s {
+  char *base;
+  struct int_bounds *bounds;
+} ghdl_string;
+
+typedef struct ghdl_int_array_s {
+  uint32_t *base;
+  struct int_bounds *bounds;
+} ghdl_int_array;
 
 // signal mapping
 static int cosim_fs_count = 0;
@@ -109,89 +109,142 @@ static sigentry_t * cosim_from_set;
 static sigentry_t * cosim_to_set;
 
 // prototypes
-static int init_pipes();
-static int init_socket();
+static int init_connection();
+static int init_unix_socket(char * socket_path);
+static int init_inet_socket(char * socket_path);
 static void d_print_rawdata(uint32_t * data, int len, char * premsg);
 static void d_print_sigset(sigentry_t * base, int len, char * premsg);
 static int parse_init(char * input);
 static int sendrecv(char * buf, int max_len);
 void intseq_to_signals(uint32_t * datain);
 
-int startup_simulation (uint64_t time, uint64_t time_res, char ** from_signals, char ** to_signals);
-int update_signal (uint32_t ** datain, uint32_t ** dataout, uint64_t time);
+int startup_simulation (uint64_t time, uint64_t time_res, ghdl_string * from_signals, ghdl_string * to_signals);
+int update_signal (ghdl_int_array * datain, ghdl_int_array * dataout, uint64_t time);
 uint64_t next_timetrigger(uint64_t curtime);
 
-static int init_pipes()
+static int init_connection()
 {
+    char *s;
     char *w;
     char *r;
+    int sockfd;
 
-    if (init_pipes_flag) {
+    if (init_connection_flag) {
         return 0;
     }
-
-    if ((w = getenv("MYHDL_TO_PIPE")) == NULL) {
-        d_perror("getenv");
-        debug("VHPI: error on getenv MYHDL_TO_PIPE\n");
+    
+    s = getenv("MYHDL_SOCKET");
+    w = getenv("MYHDL_TO_PIPE");
+    r = getenv("MYHDL_FROM_PIPE");
+    
+    if (s != NULL) {
+        // sockets available, use as first choice
+        
+        /* format for socket path:
+         <hostname>:<port> for IP sockets
+         <filepath> for unix sockets (assume full path)
+         */ 
+        if(strchr(s, ':') != NULL) {
+            // format candidate for inet socket
+            sockfd = init_inet_socket(s);
+        } else {
+            // assume UNIX sockets
+            sockfd = init_unix_socket(s);
+        }
+        // if any error ocurred before, was already reported
+        if(sockfd < 0) return -1;
+        conn_sockfd = sockfd;
+        
+    } else if ((w != NULL) && (r != NULL)) {
+        // fallback to unix pipes
+        wpipe = atoi(w);
+        rpipe = atoi(r);
+        debug("DEBUG: setup pipes done.\n");
+    } else {
+        debug("VHPI: unable to set a connection with MyHDL.\n");
         return -1;
     }
-    if ((r = getenv("MYHDL_FROM_PIPE")) == NULL) {
-        d_perror("getenv");
-        debug("VHPI: error on getenv MYHDL_FROM_PIPE\n");
-        return -1;
-    }
-    wpipe = atoi(w);
-    rpipe = atoi(r);
-    debug("DEBUG: setup pipes done\n");
-    init_pipes_flag = 1;
+    
+    init_connection_flag = 1;
     return 0;
 }
 
-static int init_socket()
+static int init_unix_socket(char * socket_path)
 {
-    char *s;
     int sockfd;
-    struct sockaddr_un addr;
-
-    if (open_sockfd > 0) {
-        return open_sockfd;
-    }
-
-    if ((s = getenv("MYHDL_SOCKET")) == NULL) {
-        d_perror("getenv");
-        debug("VHPI: error on getenv\n");
-        return -1;
-    }
-    strncpy(socket_path, s, MAX_STRING);
+    struct sockaddr_un unix_addr;
     
     sockfd = socket(PF_UNIX, SOCK_STREAM, 0);
     if(sockfd < 0) {
         d_perror("socket");
-        debug("VHPI: error on socket\n");
-        return sockfd;
+        debug("VHPI: error on UNIX socket\n");
+        return -1;
     } 
     
     unlink(socket_path);
+    unix_addr.sun_family = AF_UNIX;
+    snprintf(unix_addr.sun_path, UNIX_PATH_MAX, socket_path);
     
-    addr.sun_family = AF_UNIX;
-    snprintf(addr.sun_path, UNIX_PATH_MAX, socket_path);
-    
-    if (connect(sockfd, (struct sockaddr *) &addr, sizeof(addr)) == -1) {
+    if (connect(sockfd, (struct sockaddr *) &unix_addr, sizeof(unix_addr)) == -1) {
         d_perror("connect");
-        debug("VHPI: error on connect\n");
+        debug("VHPI: UNIX socket, error on connect\n");
         close(sockfd);
         return -1;
     }
-    
-    open_sockfd = sockfd;
-    
-    debug("VHPI: unix socket in %s sockfd %d\n", socket_path, sockfd);
-    
-    return open_sockfd;
+    debug("DEBUG: setup UNIX socket done (%s).\n", socket_path);
+    return sockfd;
 }
 
+static int init_inet_socket(char * socket_path)
+{
+    int retval, sockfd, hostlen;
+    char hostname[MAX_STRING], portname[MAX_STRING];
+    char *bufptr;
+    struct addrinfo * result;
+    
+    bufptr = strrchr(socket_path, ':');
+    hostlen = (int) (bufptr - socket_path);
+    strncpy(hostname, socket_path, hostlen);
+    bufptr++;
+    strncpy(portname, bufptr, hostlen);
+    
+    retval = getaddrinfo(hostname, portname, NULL, &result);
+    
+    if(retval < 0) {
+        debug("VHPI: error on INET getaddrinfo (reason: %s).\n", gai_strerror(retval));
+        return -1;
+    } 
+    
+    if(result->ai_family == AF_INET) {
+        sockfd = socket(PF_INET, SOCK_STREAM, 0);
+    } else if(result->ai_family == AF_INET6) {
+        sockfd = socket(PF_INET6, SOCK_STREAM, 0);
+    } 
+    
+    if(sockfd < 0) {
+        d_perror("socket");
+        debug("VHPI: error on INET socket creation.\n");
+        freeaddrinfo(result);
+        return -1;
+    } 
+    
+    if (connect(sockfd, result->ai_addr, result->ai_addrlen) == -1) {
+        d_perror("connect");
+        debug("VHPI: error on INET connect.\n");
+        close(sockfd);
+        freeaddrinfo(result);
+        return -1;
+    }
+    debug("VHPI: INET socket (%s) done. sockfd=%d .\n", socket_path, sockfd);
+    
+    freeaddrinfo(result);    
+    return sockfd;
+}
+
+#ifdef VHPI_DEBUG
 static void d_print_rawdata(uint32_t * data, int len, char * premsg)
 {
+
     int i , nbytes;
     char buf[MAX_STRING];
     for(i = 0, nbytes = 0; i < len; i++) {
@@ -217,6 +270,18 @@ static void d_print_sigset(sigentry_t * base, int len, char * premsg)
     }
     debug("VHPI: %s sigentry output: %s\n", premsg, buf);
 }
+#else
+static void d_print_rawdata(uint32_t * data, int len, char * premsg)
+{
+    return;
+}
+
+static void d_print_sigset(sigentry_t * base, int len, char * premsg)
+{
+    return;
+}
+#endif
+
 
 static int parse_init(char * input)
 {
@@ -238,7 +303,7 @@ static int parse_init(char * input)
         if(token == NULL) break;
         // second element: bitsize
         // check if is a positive number (non-zero)
-        if(sscanf(token, "%li", &tmpnumber) < 0) break;
+        if(sscanf(token, "%ld", &tmpnumber) < 0) break;
         if(tmpnumber <= 0) break;
         sizes_count++;
         // ---
@@ -255,11 +320,13 @@ static int sendrecv(char * buf, int max_len)
     nbytes = strlen(buf);
     
     debug("VHPI: wpipe sending  >>>%s<<<\n", buf);
-#ifdef USE_SOCKETS
-    retval = send(open_sockfd, buf, nbytes, MSG_NOSIGNAL);
-#else
-    retval = write(wpipe, buf, nbytes);
-#endif
+    
+    if(conn_sockfd > 0) {
+        retval = send(conn_sockfd, buf, nbytes, MSG_NOSIGNAL);
+    } else {
+        retval = write(wpipe, buf, nbytes);
+    }
+    
     if(retval <= 0) {
         // check for EPIPE error: simply return 0 bytes read
         if(errno == EPIPE) return 0;
@@ -268,11 +335,12 @@ static int sendrecv(char * buf, int max_len)
         return retval;
     }
     
-#ifdef USE_SOCKETS   
-    nbytes = recv(open_sockfd, buf, max_len, MSG_NOSIGNAL);
-#else
-    nbytes = read(rpipe, buf, max_len);
-#endif
+    if(conn_sockfd > 0) {
+        nbytes = recv(conn_sockfd, buf, max_len, MSG_NOSIGNAL);
+    } else {
+        nbytes = read(rpipe, buf, max_len);
+    }
+    
     if(nbytes < 0) {
         d_perror("recv");
         debug("VHPI: error on recv (%d)\n", nbytes);
@@ -312,17 +380,18 @@ void intseq_to_signals(uint32_t * datain)
             if(bitidx + size > 32){
                 dif = bitidx + size - 32;
                 // first part
-                tmpvalue = (datain[intidx] >> bitidx) & ((1 << (size - dif)) - 1);
+                tmpvalue = datain[intidx];
+                tmpvalue >>= bitidx;
+                tmpvalue &= ((1 << (size - dif)) - 1);
                 intidx++;
                 if(intidx >= cosim_ts_bytesize) break;
                 // second part
                 tmpvalue |= (datain[intidx] & ((1 << dif) - 1)) << (size - dif);
                 bitidx = dif;
             } else {
-//                 tmpvalue = datain[intidx];
-//                 tmpvalue >>= bitidx;
-//                 tmpvalue &= (1 << size) - 1;
-                tmpvalue = (datain[intidx] >> bitidx) & ((1 << size) - 1);
+                tmpvalue = datain[intidx];
+                tmpvalue >>= bitidx;
+                tmpvalue &= (1 << size) - 1;
                 bitidx += size;
             }
             if (cosim_to_set[setidx].value != tmpvalue){
@@ -340,7 +409,9 @@ void intseq_to_signals(uint32_t * datain)
                 if(bitidx + size > 32){
                     dif = bitidx + size - 32;
                     // first part
-                    tmpvalue = (datain[intidx] >> bitidx) & ((1 << (size - dif)) - 1);
+                    tmpvalue = datain[intidx];
+                    tmpvalue >>= bitidx;
+                    tmpvalue &= ((1 << (size - dif)) - 1);
                     intidx++;
                     if(intidx >= cosim_ts_bytesize) break;
                     // second part
@@ -448,19 +519,19 @@ void signals_to_intseq(uint32_t * dataout)
     }
 }
 
-// external interface to cosim_core
+// ***** external interface to myhdl_vhpi_core *****
 
 /** startup_simulation
  * called on the start of simulation
  * 
  */
-int startup_simulation (uint64_t time, uint64_t time_res, char ** from_signals, char ** to_signals)
+int startup_simulation (uint64_t time, uint64_t time_res, ghdl_string * from_signals, ghdl_string * to_signals)
 {
     int retval, i, nbytes;
     char buf[MAX_STRING];
     char *bufptr, *token;
     
-    debug("VHPI: startup_simulation:\n time = %ld\n time_res = %ld\n from_signals = (%p)>(%p) <%s>\n to_signals = (%p)>(%p) <%s>\n", time, time_res, from_signals, *from_signals, *from_signals, to_signals, *to_signals, *to_signals);
+    debug("VHPI: startup_simulation:\n time = %ld\n time_res = %ld\n from_signals = <%s>\n to_signals = <%s>\n", (unsigned long) time, (unsigned long) time_res, from_signals->base, to_signals->base);
     
     // call once only
     if (cosim_init_flag) {
@@ -474,20 +545,18 @@ int startup_simulation (uint64_t time, uint64_t time_res, char ** from_signals, 
     myhdl_curtime = time / vhdl_time_res;
     myhdl_next_trigger = 0;
     
-    // gdb stuff
-    debug("VHPI: PID = %d . Waiting 10 seconds to gdb attach.\n", getpid());
-    //sleep(10);
+    debug("VHPI: PID = %d\n", getpid());
+#ifdef VHPI_GDBWAIT
+    debug("VHPI: Waiting 10 seconds to gdb attach.\n");
+    sleep(10);
     debug("VHPI: ... Done. You should be gdb attached now.\n");
-    
-#ifdef USE_SOCKETS
-    retval = init_socket();
-#else
-    retval = init_pipes();
 #endif
+    
+    retval = init_connection();
     if(retval < 0) return retval;
     
-    strncpy(cosim_from_signals, *from_signals, MAX_STRING);
-    strncpy(cosim_to_signals, *to_signals, MAX_STRING);
+    strncpy(cosim_from_signals, from_signals->base, MAX_STRING);
+    strncpy(cosim_to_signals, to_signals->base, MAX_STRING);
     
     // parse info
     cosim_fs_count = parse_init(cosim_from_signals);
@@ -526,7 +595,7 @@ int startup_simulation (uint64_t time, uint64_t time_res, char ** from_signals, 
             cosim_from_set[i].ptrvalue = (uint32_t *) malloc(((cosim_from_set[i].size/32)+1)*sizeof(uint32_t));
             if(cosim_from_set[i].ptrvalue == NULL) {
                 d_perror("malloc");
-                debug("VHPI: malloc error\n");
+                debug("VHPI: malloc error.\n");
                 return -1;
             }
         }
@@ -552,7 +621,7 @@ int startup_simulation (uint64_t time, uint64_t time_res, char ** from_signals, 
             cosim_to_set[i].ptrvalue = (uint32_t *) malloc(((cosim_to_set[i].size/32)+1)*sizeof(uint32_t));
             if(cosim_to_set[i].ptrvalue == NULL) {
                 d_perror("malloc");
-                debug("VHPI: malloc error\n");
+                debug("VHPI: malloc error.\n");
                 return -1;
             }
         }
@@ -564,24 +633,24 @@ int startup_simulation (uint64_t time, uint64_t time_res, char ** from_signals, 
     debug("VHPI: FROM %d signals => %d bits in %d bytes\n", cosim_fs_count, cosim_fs_bitsize, cosim_fs_bytesize);
     debug("VHPI: TO %d signals => %d bits in %d bytes\n", cosim_ts_count, cosim_ts_bitsize, cosim_ts_bytesize);
     
-    snprintf(buf, MAX_STRING, "FROM %ld %s ", time, cosim_from_signals);
+    snprintf(buf, MAX_STRING, "FROM %ld %s ", (unsigned long) time, cosim_from_signals);
     
     nbytes = sendrecv(buf, MAX_STRING);
     if(nbytes <= 0) return retval;
     
     // check for OK
     if((buf[0] != 'O') && (buf[0] != 'K')) {
-        debug("VHPI: error, MyHDL returned (%s)\n", buf);
+        debug("VHPI: error, MyHDL returned (%s).\n", buf);
         return -1;
     }
     
-    snprintf(buf, MAX_STRING, "TO %ld %s ", time, cosim_to_signals);
+    snprintf(buf, MAX_STRING, "TO %ld %s ", (unsigned long) time, cosim_to_signals);
     
     nbytes = sendrecv(buf, MAX_STRING);
     if(nbytes <= 0) return retval;
     
     if((buf[0] != 'O') && (buf[0] != 'K')) {
-        debug("VHPI: error, MyHDL returned (%s)\n", buf);
+        debug("VHPI: error, MyHDL returned (%s).\n", buf);
         return -1;
     }
     
@@ -592,7 +661,7 @@ int startup_simulation (uint64_t time, uint64_t time_res, char ** from_signals, 
     if(nbytes <= 0) return retval;
     
     if((buf[0] != 'O') && (buf[0] != 'K')) {
-        debug("VHPI: error, MyHDL returned (%s)\n", buf);
+        debug("VHPI: error, MyHDL returned (%s).\n", buf);
         return -1;
     }
     
@@ -605,29 +674,21 @@ int startup_simulation (uint64_t time, uint64_t time_res, char ** from_signals, 
  * called on a change event on datain signals
  * 
  */
-int update_signal (uint32_t ** datain, uint32_t ** dataout, uint64_t time)
+int update_signal (ghdl_int_array * datain, ghdl_int_array * dataout, uint64_t time)
 {
     int retval, nbytes, i, j, valbytes, valindex;
     char buf[MAX_STRING];
     char val[MAX_STRING];
     char * bufptr, *valptr, *token;
     
-    uint32_t *datain_ptr, *dataout_ptr;
-    uint64_t myhdl_temptime, delta;
+    uint64_t myhdl_temptime;
     
-    debug("VHPI: update_signal:\n datain = %p\n dataout = %p\n time = %ld\n\n", datain, dataout, time);
+    debug("VHPI: update_signal:\n datain = %p\n dataout = %p\n time = %ld\n", datain, dataout, (unsigned long) time);
     
-#ifdef USE_SOCKETS
-    retval = init_socket();
-#else
-    retval = init_pipes();
-#endif
+    retval = init_connection();
     if(retval < 0) return UPDATE_ERROR;
     
-    datain_ptr = *datain;
-    dataout_ptr = *dataout;
-    
-    d_print_rawdata(datain_ptr, cosim_ts_bytesize, "datain");
+    d_print_rawdata(datain->base, cosim_ts_bytesize, "datain");
     
     // convert datain to signal values (to put in TO signal set)
     intseq_to_signals(datain_ptr);
@@ -637,9 +698,8 @@ int update_signal (uint32_t ** datain, uint32_t ** dataout, uint64_t time)
     // prepare time counter
     vhdl_curtime = time;
     myhdl_temptime = time / vhdl_time_res;
-    delta = time % vhdl_time_res;
-    nbytes = snprintf(buf, MAX_STRING, "%ld ", myhdl_temptime);
-    debug("VHPI: prev_myhdl_time = %ld , myhdl_time = %ld , delta = %ld\n", myhdl_curtime, myhdl_temptime, delta);
+    nbytes = snprintf(buf, MAX_STRING, "%ld ", (unsigned long) myhdl_temptime);
+    debug("VHPI: prev_myhdl_time = %ld , myhdl_time = %ld\n", (unsigned long) myhdl_curtime, (unsigned long) myhdl_temptime);
     myhdl_curtime = myhdl_temptime;
     bufptr = &(buf[nbytes]);
     
@@ -672,8 +732,8 @@ int update_signal (uint32_t ** datain, uint32_t ** dataout, uint64_t time)
     // format: <time> [<data-1> ... <data-n>]
     
     token = strtok_r(buf, " ", &bufptr);
-    sscanf(token, "%li", &myhdl_temptime);
-    debug("VHPI: cur_myhdl_time = %ld , next_myhdl_time = %ld\n", myhdl_curtime, myhdl_temptime);
+    sscanf(token, "%ld", (unsigned long *) &myhdl_temptime);
+    debug("VHPI: cur_myhdl_time = %ld , next_myhdl_time = %ld\n", (unsigned long) myhdl_curtime, (unsigned long) myhdl_temptime);
     
     for(i = 0; i < cosim_fs_count; i++) {
         token = strtok_r(NULL, " ", &bufptr);
@@ -704,27 +764,25 @@ int update_signal (uint32_t ** datain, uint32_t ** dataout, uint64_t time)
         retval = UPDATE_DELTA;
     } else {
         debug("VHPI: update %d signals from myhdl.\n", cosim_fs_count);
-        signals_to_intseq(dataout_ptr);
+        signals_to_intseq(dataout->base);
         retval = UPDATE_SIGNAL;
     }
     
-    d_print_rawdata(dataout_ptr, cosim_fs_bytesize, "dataout");
+    d_print_rawdata(dataout->base, cosim_fs_bytesize, "dataout");
     
     // time check
     if(myhdl_temptime > myhdl_curtime) {
-        debug("VHPI: myhdl call for time step to %li.\n", myhdl_temptime);
+        debug("VHPI: myhdl call for time step to %ld.\n", (unsigned long) myhdl_temptime);
         myhdl_next_trigger = myhdl_temptime;
         retval = UPDATE_TIME;
     }
     
-    // hack: update outputs on time 0 on the right moment
+    // hack: update outputs on time 0 
     if((retval == UPDATE_DELTA) && (vhdl_curtime == 0)) {
         for(i = 0; i < cosim_ts_count; i++) {
             if(cosim_to_set[i].flags & FLAG_INITIAL_VAL) {
-                debug("VHPI: hack for time 0 signal %s (prev flags %d).\n", cosim_to_set[i].name, cosim_to_set[i].flags);
                 cosim_to_set[i].flags |= FLAG_HAS_CHANGED;
                 cosim_to_set[i].flags &= ~FLAG_INITIAL_VAL;
-                debug("VHPI: hack for time 0 signal %s (flags %d).\n", cosim_to_set[i].name, cosim_to_set[i].flags);
             }
         }
     }
@@ -739,13 +797,12 @@ uint64_t next_timetrigger(uint64_t curtime)
     uint64_t myhdl_temptime, delta;
     
     myhdl_temptime = curtime / vhdl_time_res;
-    delta = curtime % vhdl_time_res;
     
-    debug("VHPI: next_timetrigger: temp_time %li delta %li\n", myhdl_temptime, delta);
+    debug("VHPI: next_timetrigger: temp_time %ld\n", (unsigned long) myhdl_temptime);
     
     if(myhdl_next_trigger > myhdl_temptime) {
         delta = (myhdl_next_trigger - myhdl_temptime) * vhdl_time_res;
-        debug("VHPI: next_timetrigger: next VHDL trigger in %li\n", delta);
+        debug("VHPI: next_timetrigger: next VHDL trigger in %ld\n", (unsigned long) delta);
         return delta;
     } else {
         return vhdl_time_res;

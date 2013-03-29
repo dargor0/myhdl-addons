@@ -1,6 +1,23 @@
--- Cosimulation core: glue for external module implementation
-
--- Author: Oscar Diaz
+--  MyHDL co-simulation support for GHDL
+--  * entity for external module implementation
+--  
+--  Author:  Oscar Diaz <oscar.dc0@gmail.com>
+--  Date:    16-02-2013
+-- 
+--  This code is free software; you can redistribute it and/or
+--  modify it under the terms of the GNU Lesser General Public
+--  License as published by the Free Software Foundation; either
+--  version 3 of the License, or (at your option) any later version.
+-- 
+--  This code is distributed in the hope that it will be useful,
+--  but WITHOUT ANY WARRANTY; without even the implied warranty of
+--  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+--  Lesser General Public License for more details.
+-- 
+--  You should have received a copy of the GNU Lesser General Public
+--  License along with this package; if not, see 
+--  <http://www.gnu.org/licenses/>.
+--  
 
 package extern_vhpi_interface is
     type intreg_t is array (integer range <>) of integer;
@@ -39,67 +56,58 @@ use work.extern_vhpi_interface.all;
 
 entity myhdl_ghdl_core is
     generic (
-        C_FROM_WIDTH  : integer := 32;
-        C_TO_WIDTH : integer := 32;
+        C_FROM_WIDTH   : integer := 32;
+        C_TO_WIDTH     : integer := 32;
         C_TIMERES      : time := 1 ns;
         C_FROM_SIGINFO : string := "";
         C_TO_SIGINFO   : string := ""
         );
     port (
-        To_sigvector   : in  std_logic_vector((C_TO_WIDTH-1) downto 0); -- input
-        From_sigvector : out std_logic_vector((C_FROM_WIDTH-1) downto 0) -- output
+        To_sigvector   : in  std_logic_vector((C_TO_WIDTH-1) downto 0);
+        From_sigvector : out std_logic_vector((C_FROM_WIDTH-1) downto 0)
     );
 end entity myhdl_ghdl_core;
 
 architecture sim of myhdl_ghdl_core is
 
     constant to_siginfo_integer_count : integer := (C_TO_WIDTH / 32) + 1;
-    constant from_integer_count : integer := (C_FROM_WIDTH / 32) + 1;
-    constant from_lastint_size : integer := (C_FROM_WIDTH mod 32);
+    constant from_integer_count       : integer := (C_FROM_WIDTH / 32) + 1;
+    constant from_lastint_size        : integer := (C_FROM_WIDTH mod 32);
 
     begin
         startup : process
             variable ret : integer := 0;
             begin
                 ret := startup_simulation(now, C_TIMERES, C_FROM_SIGINFO, C_TO_SIGINFO);
-                assert ret = 0 report "FATAL: startup_simulation() returned error" severity failure;
+                assert ret = 0 report "FATAL: startup_simulation() returned error " & integer'image(ret) severity failure;
                 wait;
         end process startup;
 
         regmanager : process
-            variable ret : integer := 0;
+            variable ret        : integer := 0;
             variable deltasteps : integer := 0;
-            variable out_slv : std_logic_vector((C_FROM_WIDTH-1) downto 0);
-            variable temp_in : intreg_t(0 to (to_siginfo_integer_count - 1)) := (others => 0);
-            variable temp_out : intreg_t(0 to (from_integer_count - 1)) := (others => 0);
-            variable timedelta : time := 0 ns;
+            variable out_slv    : std_logic_vector((C_FROM_WIDTH-1) downto 0);
+            variable temp_in    : intreg_t(0 to (to_siginfo_integer_count - 1)) := (others => 0);
+            variable temp_out   : intreg_t(0 to (from_integer_count - 1)) := (others => 0);
+            variable timedelta  : time := 0 ns;
             begin
                 mainloop: loop
-                    assert false report "INFO: regmanager -> update running..." severity note;
                     for i in (to_siginfo_integer_count - 1) downto 0 loop
                         if i = (to_siginfo_integer_count - 1) then
                             temp_in(i) := to_integer(unsigned(To_sigvector((C_TO_WIDTH-1) downto (i*32))));
-                            assert false report "INFO: last temp_in(" & integer'image(i) & ")=" & integer'image(temp_in(i)) severity note;
-                            assert false report "INFO: last temp_out(" & integer'image(i) & ")=" & integer'image(temp_out(i)) severity note;
                         else
                             temp_in(i) := to_integer(unsigned(To_sigvector(((i*32)+31) downto (i*32))));
-                            assert false report "INFO: temp_in(" & integer'image(i) & ")=" & integer'image(temp_in(i)) severity note;
-                            assert false report "INFO: temp_out(" & integer'image(i) & ")=" & integer'image(temp_out(i)) severity note;
                         end if;
                     end loop;
                     ret := update_signal(temp_in, temp_out, now);
-                    assert false report "INFO: update_signal returns " & integer'image(ret) severity note;
-                    assert ret >= 0 report "FATAL: regmanager->update_signal() returned error" severity failure;
+                    assert ret >= 0 report "FATAL: regmanager->update_signal() returned error " & integer'image(ret) severity failure;
                     for i in (from_integer_count - 1) downto 0 loop
                         if i = (from_integer_count - 1) then
                             out_slv((C_FROM_WIDTH-1) downto (i*32)) := std_logic_vector(to_unsigned(temp_out(i), from_lastint_size));
-                            assert false report "INFO: last temp_out(" & integer'image(i) & ")=" & integer'image(temp_out(i)) severity note;
                         else
                             out_slv(((i*32)+31) downto (i*32)) := std_logic_vector(to_unsigned(temp_out(i), 32));
-                            assert false report "INFO: temp_out(" & integer'image(i) & ")=" & integer'image(temp_out(i)) severity note;
                         end if;
                     end loop;
-                    assert false report "INFO: timetrigger -> finish update" severity note;
                     From_sigvector <= out_slv;
                     case ret is
                         when 0 =>
@@ -109,19 +117,16 @@ architecture sim of myhdl_ghdl_core is
                         when 1 =>
                             -- UPDATE_SIGNAL  1 // next update need a signal trigger or small time delay
                             deltasteps := 0;
-                            assert false report "INFO: update signal" severity note;
                             wait on To_sigvector for C_TIMERES;
                             next;
                         when 2 =>
                             -- UPDATE_TIME   2 // next update will be at a time delay
                             deltasteps := 0;
                             timedelta := next_timetrigger(now);
-                            assert false report "INFO: update time delta=" & time'image(timedelta) severity note;
                             wait for timedelta;
                             next;
                         when 3 =>
                             -- UPDATE_DELTA 3 // next update need a delta step
-                            assert false report "INFO: update delta count=" & integer'image(deltasteps) severity note;
                             deltasteps := deltasteps + 1;
                             -- Hardcode max deltasteps to 10
                             if deltasteps > 10 then
