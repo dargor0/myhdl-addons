@@ -4,7 +4,7 @@ from myhdl import Cosimulation
 
 vhdl_srcroute = "../../test/vhdl"
 
-cmd = "make -C %s dut_inc"
+cmd = "make -s -C %s dut_inc"
       
 def inc(count, enable, clock, reset, n):
     os.environ["INC_N"] = str(n)

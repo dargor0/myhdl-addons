@@ -35,4 +35,21 @@ Unix-style pipes IPC. Sockets IPC (UNIX, IPv4 and IPv6) are also available.
 
 Test is available on the "test" subdirectory, just run "python test_all.py".
 
-ghdl_env downloaded from http://ygdes.com/GHDL/ghdl_env/
+Thanks to Yann Guidon for ghdl_env, downloaded from http://ygdes.com/GHDL/ghdl_env/
+
+Issues:
+
+* Signal descriptions must be stored in string generics, there's no introspection 
+available with this method.
+
+* Signal propagation could be delayed C_TIMERES at most, because the entity 
+"myhdl_ghdl_core" manage time delays until next MyHDL event, unable to explicitly
+wait for a delta time.
+
+* inc_test features using environment variables to pass values to VHDL. However, only 
+variables that can change in runtime 
+
+* Type is restricted to std_logic and std_logic_vector. Integers should be converted
+to 32-bit std_logic_vector.
+
+Last update: Sun, 31 Mar 2013 14:51:15 +0200

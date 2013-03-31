@@ -3,19 +3,17 @@ use ieee.std_logic_1164.all;
 
 use work.myhdl_ghdl_core;
 use work.bin2gray;
-use work.ghdl_env.all;
 
 entity dut_bin2gray is
+    generic(C_WIDTH : integer := 9 );
 end entity dut_bin2gray;
 
 architecture sim of dut_bin2gray is
 
-    constant c_width : integer := getenv("C_WIDTH", 2);
-
     -- B
-    constant to_width : integer := c_width;
+    constant to_width : integer := C_WIDTH;
     -- G
-    constant from_width : integer := c_width;
+    constant from_width : integer := C_WIDTH;
     -- time res
     constant timeres : time := 1 ns;
     -- input information data (to MyHDL)
@@ -40,10 +38,9 @@ architecture sim of dut_bin2gray is
                 From_sigvector => from_vec);
                 
         dut_inst : entity bin2gray
-            generic map (c_width => 2)
+            generic map (C_WIDTH => C_WIDTH)
             port map (
                 B => from_vec,
                 G => to_vec);
-                
-        -- signal mapping
+
 end architecture sim;

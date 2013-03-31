@@ -25,7 +25,10 @@ myhdl_ghdl_vhpi.o: myhdl_ghdl_vhpi.c
 ghdl_env_c.o: ghdl_env.c
 	$(CC) -c -fPIC $(CFLAGS) -o $@ $<
 
-myhdl_ghdl_core.o : myhdl_ghdl_core.vhdl
+myhdl_ghdl_core.o : myhdl_ghdl_core.vhdl myhdl_ghdl_extern.o
+	$(GHDL) -a $(GHDLFLAGS) $<
+
+myhdl_ghdl_extern.o : myhdl_ghdl_extern.vhdl
 	$(GHDL) -a $(GHDLFLAGS) $^
 	
 ghdl_env.o : ghdl_env.vhdl

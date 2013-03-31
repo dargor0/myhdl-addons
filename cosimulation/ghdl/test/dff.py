@@ -4,7 +4,7 @@ from myhdl import Cosimulation
 
 vhdl_srcroute = "../../test/vhdl"
 
-cmd = "make -C %s dut_dff"
+cmd = "make -s -C %s dut_dff"
       
 def dff(q, d, clk, reset):
     os.system(cmd % vhdl_srcroute)

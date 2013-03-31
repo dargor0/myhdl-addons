@@ -32,8 +32,8 @@
 #include <netinet/ip.h>
 #include <netdb.h>
 
-//#define VHPI_DEBUG 1
-//#define VHPI_GDBWAIT 1
+// #define VHPI_DEBUG 1
+// #define VHPI_GDBWAIT 1
 
 #ifdef VHPI_DEBUG
 #define d_perror(x) perror(x)
@@ -44,8 +44,9 @@
 #endif
 
 // bit masks for sigentry.flags
-#define FLAG_HAS_CHANGED 0x1
-#define FLAG_INITIAL_VAL 0x2
+#define FLAG_HAS_CHANGED  0x1
+#define FLAG_INITIAL_VAL  0x2
+#define FLAG_UNCONFIGURED 0x4
 
 // codes for update_signal return value
 #define UPDATE_ERROR -1 
@@ -71,55 +72,80 @@ static uint64_t vhdl_curtime = 0;
 static uint64_t myhdl_curtime = 0;
 static uint64_t myhdl_next_trigger = 0;
 
-// string object from GHDL
-struct int_bounds {
-  int left;
-  int right;
-  char dir;
-  unsigned int len;
+// string objects from GHDL
+struct array_bounds {
+    int left;
+    int right;
+    char dir; // 0x0: to, 0x1: downto
+    unsigned int len;
 };
 
+/*
+Arrays: pointer "base" holds data in memory
+pos 0 on memory holds left index, pos <len-1> holds right index
+dir = 0: bitwise little-endian, dir = 1: bitwise big-endian
+*/
+
 typedef struct ghdl_string_s {
-  char *base;
-  struct int_bounds *bounds;
+    char *base;
+    struct array_bounds *bounds;
 } ghdl_string;
 
-typedef struct ghdl_int_array_s {
-  uint32_t *base;
-  struct int_bounds *bounds;
-} ghdl_int_array;
+typedef struct ghdl_std_logic_vector_s {
+    uint8_t *base;
+    struct array_bounds *bounds;
+} ghdl_std_logic_vector;
+
+/*
+    std_logic type:
+    0: 'U',  -- Uninitialized
+    1: 'X',  -- Forcing  Unknown
+    2: '0',  -- Forcing  0
+    3: '1',  -- Forcing  1
+    4: 'Z',  -- High Impedance
+    5: 'W',  -- Weak     Unknown
+    6: 'L',  -- Weak     0
+    7: 'H',  -- Weak     1
+    8: '-'   -- Don't care
+*/
+static const char std_logic_charmap[] = {'U', 'X', '0', '1', 'Z', 'W', 'L', 'H', '-'};
+#define STD_LOGIC_VAL0 0x2
+#define STD_LOGIC_VAL1 0x3
 
 // signal mapping
 static int cosim_fs_count = 0;
 static int cosim_ts_count = 0;
 static int cosim_fs_bitsize = 0;
 static int cosim_ts_bitsize = 0;
-static int cosim_fs_bytesize = 0;
-static int cosim_ts_bytesize = 0;
+
 typedef struct sigentry {
     char name[MAX_STRING];
-    int size;
+    int size_reported; 
     int flags;
-    union {
-        uint32_t value;
-        uint32_t * ptrvalue;
-    };
+    struct array_bounds bounds;
+    ghdl_std_logic_vector * ptrvector;
 } sigentry_t;
+
 static sigentry_t * cosim_from_set;
 static sigentry_t * cosim_to_set;
+uint8_t * cosim_to_sigcopy;
 
 // prototypes
 static int init_connection();
 static int init_unix_socket(char * socket_path);
 static int init_inet_socket(char * socket_path);
-static void d_print_rawdata(uint32_t * data, int len, char * premsg);
+static void d_print_rawdata(ghdl_std_logic_vector * data, char * premsg);
 static void d_print_sigset(sigentry_t * base, int len, char * premsg);
 static int parse_init(char * input);
+static void sigset_config(sigentry_t * base, int count, ghdl_std_logic_vector * vector);
+static void sigset_to_update(ghdl_std_logic_vector * to_vector);
 static int sendrecv(char * buf, int max_len);
-void intseq_to_signals(uint32_t * datain);
+static int std_logic_vector_to_string(ghdl_std_logic_vector * data, struct array_bounds * opt_bounds, char * binbuf, char * hexbuf, int max_len);
+static int hex_to_int(char ch);
+static char int_to_hex(int num);
 
 int startup_simulation (uint64_t time, uint64_t time_res, ghdl_string * from_signals, ghdl_string * to_signals);
-int update_signal (ghdl_int_array * datain, ghdl_int_array * dataout, uint64_t time);
+int update_signal (ghdl_std_logic_vector * datain, ghdl_std_logic_vector * dataout, uint64_t time);
 uint64_t next_timetrigger(uint64_t curtime);
 
 static int init_connection()
@@ -242,36 +268,48 @@ static int init_inet_socket(char * socket_path)
 }
 
 #ifdef VHPI_DEBUG
-static void d_print_rawdata(uint32_t * data, int len, char * premsg)
+static void d_print_rawdata(ghdl_std_logic_vector * data, char * premsg)
 {
-
-    int i , nbytes;
+    int i;
     char buf[MAX_STRING];
-    for(i = 0, nbytes = 0; i < len; i++) {
-        nbytes += snprintf(&(buf[nbytes]), MAX_STRING - nbytes, " %d ", data[i]);
+    char * dirstr;
+    
+    if(data->bounds->dir) {
+        dirstr = "downto";
+    } else {
+        dirstr = "to";
     }
-    debug("VHPI: %s data output: %s\n", premsg, buf);
+    for(i = 0; i < data->bounds->len; i++) {
+        buf[i] = std_logic_charmap[data->base[i]];
+    }
+    buf[i] = '\0';
+    debug("VHPI: %s binary data (%d %s %d): %s\n", premsg, data->bounds->left, dirstr, data->bounds->right, buf);
 }
 
 static void d_print_sigset(sigentry_t * base, int len, char * premsg)
 {
-    int i, j, nbytes, valbytes;
-    char buf[MAX_STRING];
-    for(i = 0, nbytes = 0; i < len; i++) {
-        nbytes += snprintf(&(buf[nbytes]), MAX_STRING - nbytes, " %s_%d;0x%x", base[i].name, base[i].size, base[i].flags);
-        if(base[i].size <= 32) {
-            nbytes += snprintf(&(buf[nbytes]), MAX_STRING - nbytes, ",0x%x", base[i].value);
+    int i;
+    char binbuf[MAX_STRING];
+    char intbuf[MAX_STRING];
+    char *dirstr;
+    
+    debug("VHPI: %s sigentry output\n", premsg);
+    for(i = 0; i < len; i++) {
+        if(base[i].bounds.dir) {
+            dirstr = "downto";
         } else {
-            valbytes = (base[i].size / 32) + 1;
-            for(j = 0; j < valbytes; j++) {
-                nbytes += snprintf(&(buf[nbytes]), MAX_STRING - nbytes, ",0x%x", base[i].ptrvalue[j]);
-            }
+            dirstr = "to";
+        }
+        debug(" %s (%d %s %d)<%d bits, flags 0x%x>", base[i].name, base[i].bounds.left, dirstr, base[i].bounds.right, base[i].bounds.len, base[i].flags);
+        if(std_logic_vector_to_string(base[i].ptrvector, &(base[i].bounds), binbuf, intbuf, MAX_STRING) == 0) {
+            debug(" {%s} [%s]\n", binbuf, intbuf);
+        } else {
+            debug(" * Error in string conversion *\n");
         }
     }
-    debug("VHPI: %s sigentry output: %s\n", premsg, buf);
 }
 #else
-static void d_print_rawdata(uint32_t * data, int len, char * premsg)
+static void d_print_rawdata(ghdl_std_logic_vector * data, char * premsg)
 {
     return;
 }
@@ -300,17 +338,75 @@ static int parse_init(char * input)
         names_count++;
         // ---
         token = strtok_r(NULL, " ", &bufptr);
-        if(token == NULL) break;
+        if(token == NULL) {
+            break;
+        }
         // second element: bitsize
         // check if is a positive number (non-zero)
-        if(sscanf(token, "%ld", &tmpnumber) < 0) break;
-        if(tmpnumber <= 0) break;
+        if(sscanf(token, "%ld", &tmpnumber) < 0) {
+            break;
+        }
+        if(tmpnumber <= 0) {
+            break;
+        }
         sizes_count++;
         // ---
         token = strtok_r(NULL, " ", &bufptr);
     }
-    if(names_count != sizes_count) return -1;
-    else return names_count;
+    if(names_count != sizes_count) {
+        return -1;
+    } else {
+        return names_count;
+    }
+}
+
+static void sigset_config(sigentry_t * base, int count, ghdl_std_logic_vector * vector)
+{
+    int i, curbit;
+    
+    // NOTE: always start with LSB bit when assigning signals in correct order
+    curbit = 0;
+    for(i = 0; i < count; i++) {
+        if (vector->bounds->dir) {
+            base[i].bounds.left = curbit + (base[i].size_reported - 1);
+            base[i].bounds.right = curbit;
+        } else {
+            base[i].bounds.left = curbit;
+            base[i].bounds.right = curbit + (base[i].size_reported - 1);
+        }
+        base[i].bounds.dir = vector->bounds->dir;
+        base[i].bounds.len = base[i].size_reported;
+        base[i].ptrvector = vector;
+        base[i].flags &= ~FLAG_UNCONFIGURED;
+        if (vector->bounds->dir) {
+            debug("VHPI: config sigentry name=%s (%d downto %d) <%d bits> ptrvector at %p\n", base[i].name, base[i].bounds.left, base[i].bounds.right, base[i].bounds.len, base[i].ptrvector);
+        } else {
+            debug("VHPI: config sigentry name=%s (%d to %d) <%d bits> ptrvector at %p\n", base[i].name, base[i].bounds.left, base[i].bounds.right, base[i].bounds.len, base[i].ptrvector);
+        }
+        curbit += base[i].size_reported;
+    }
+}
+
+static void sigset_to_update(ghdl_std_logic_vector * to_vector)
+{
+    int i, j, curbit, bitidx;
+    
+    curbit = 0;
+    for(i = 0; i < cosim_ts_count; i++) {
+        for(j = 0; (curbit < cosim_ts_bitsize) && (j < cosim_to_set[i].bounds.len); curbit++, j++) {
+            if (to_vector->bounds->dir) {
+                // downto: invert bit index
+                bitidx = (to_vector->bounds->len - 1) - curbit;
+            } else {
+                bitidx = curbit;
+            }
+            if(to_vector->base[bitidx] != cosim_to_sigcopy[bitidx]) {
+                debug("VHPI: update TO_set name=%s : curbit %d bitidx %d : %c -> %c\n", cosim_to_set[i].name, curbit, bitidx, std_logic_charmap[cosim_to_sigcopy[bitidx]], std_logic_charmap[to_vector->base[bitidx]]);
+                cosim_to_set[i].flags |= FLAG_HAS_CHANGED;
+                cosim_to_sigcopy[bitidx] = to_vector->base[bitidx];
+            }
+        }
+    }
 }
 
 static int sendrecv(char * buf, int max_len)
@@ -328,8 +424,10 @@ static int sendrecv(char * buf, int max_len)
     }
     
     if(retval <= 0) {
-        // check for EPIPE error: simply return 0 bytes read
-        if(errno == EPIPE) return 0;
+        // EPIPE error: simply return 0 bytes read
+        if(errno == EPIPE) {
+            return 0;
+        }
         d_perror("send");
         debug("VHPI: error on send (%d)\n", retval);
         return retval;
@@ -362,168 +460,129 @@ static int sendrecv(char * buf, int max_len)
     }
 }
 
-void intseq_to_signals(uint32_t * datain)
+static int std_logic_vector_to_string(ghdl_std_logic_vector * data, struct array_bounds * opt_bounds, char * binbuf, char * hexbuf, int max_len)
 {
-    int intidx, bitidx, setidx, size, dif, values_count, arrayidx;
-    uint32_t tmpvalue;
+    int j, k, l, hexval;
+    uint8_t * bindata = data->base;
+    struct array_bounds * bounds;
     
-    intidx = 0;
-    bitidx = 0;
-    setidx = 0;
-    dif = 0;
-    values_count = 0;
-    tmpvalue = 0;
-    
-    for(;setidx < cosim_ts_count ;setidx++) {
-        size = cosim_to_set[setidx].size;
-        if(size <= 32) {
-            if(bitidx + size > 32){
-                dif = bitidx + size - 32;
-                // first part
-                tmpvalue = datain[intidx];
-                tmpvalue >>= bitidx;
-                tmpvalue &= ((1 << (size - dif)) - 1);
-                intidx++;
-                if(intidx >= cosim_ts_bytesize) break;
-                // second part
-                tmpvalue |= (datain[intidx] & ((1 << dif) - 1)) << (size - dif);
-                bitidx = dif;
-            } else {
-                tmpvalue = datain[intidx];
-                tmpvalue >>= bitidx;
-                tmpvalue &= (1 << size) - 1;
-                bitidx += size;
-            }
-            if (cosim_to_set[setidx].value != tmpvalue){
-                cosim_to_set[setidx].value = tmpvalue;
-                cosim_to_set[setidx].flags |= FLAG_HAS_CHANGED;
-            }
-        } else {
-            values_count = (cosim_to_set[setidx].size / 32) + 1;
-            for(arrayidx = 0; arrayidx < values_count; arrayidx++) {
-                if(arrayidx < (values_count - 1)) {
-                    size = cosim_to_set[setidx].size % 32;
-                } else {
-                    size = 32;
-                }
-                if(bitidx + size > 32){
-                    dif = bitidx + size - 32;
-                    // first part
-                    tmpvalue = datain[intidx];
-                    tmpvalue >>= bitidx;
-                    tmpvalue &= ((1 << (size - dif)) - 1);
-                    intidx++;
-                    if(intidx >= cosim_ts_bytesize) break;
-                    // second part
-                    tmpvalue |= (datain[intidx] & ((1 << dif) - 1)) << (size - dif);
-                    bitidx = dif;
-                } else {
-                    tmpvalue = (datain[intidx] >> bitidx) & ((1 << size) - 1);
-                    bitidx += size;
-                }
-                if(cosim_to_set[setidx].ptrvalue[arrayidx] != tmpvalue) {
-                    cosim_to_set[setidx].ptrvalue[arrayidx] = tmpvalue;
-                    cosim_to_set[setidx].flags |= FLAG_HAS_CHANGED;
-                }
-            }
-        }
-        if (bitidx == 32) {
-            intidx++;
-            bitidx = 0;
-        }
-        if(intidx >= cosim_ts_bytesize) break;
+    if(opt_bounds == NULL) {
+        bounds = data->bounds;
+    } else {
+        bounds = opt_bounds;
     }
+    
+    if(bounds->dir) {
+        // "downto" order
+        if(binbuf != NULL) {
+            for(j = bounds->left, k = 0; (j >= bounds->right) && (k < max_len); j--, k++) {
+                binbuf[k] = std_logic_charmap[bindata[(data->bounds->len -1) - j]];
+            }
+            binbuf[k] = '\0';
+        }
+        
+        if(hexbuf != NULL) {
+            if ((bounds->len % 4) == 0) {
+                l = (bounds->len / 4) - 1;
+            } else {
+                l = bounds->len / 4;
+            }
+            
+            if(l+1 > max_len) {
+                return -1;
+            }
+            
+            hexbuf[l+1] = '\0';
+                
+            for(hexval = 0, j = 0, k = bounds->right; k <= bounds->left ; k++) {
+                if(bindata[(data->bounds->len - 1) - k] == STD_LOGIC_VAL1) {
+                    hexval |= (1 << j);
+                }
+                if(j == 3) {
+                    hexbuf[l] = int_to_hex(hexval);
+                    j = 0;
+                    hexval = 0;
+                    l--;
+                } else {
+                    j++;
+                }
+            }
+            if(j != 0) {
+                hexbuf[l] = int_to_hex(hexval);
+            }
+        }
+    } else {
+        // "to" order
+        if(binbuf != NULL) {
+            for(j = bounds->left, k = 0; (j <= bounds->right) && (k < MAX_STRING); j++, k++) {
+                binbuf[k] = std_logic_charmap[bindata[j]];
+            }
+            binbuf[k] = '\0';
+        }
+        
+        if(hexbuf != NULL) {
+            for(hexval = 0, j = 0, k = bounds->left, l = 0; k <= bounds->right ; k++) {
+                if(bindata[k] == STD_LOGIC_VAL1) {
+                    hexval |= (1 << j);
+                }
+                if(j == 3) {
+                    hexbuf[l] = int_to_hex(hexval);
+                    j = 0;
+                    hexval = 0;
+                    l++;
+                    
+                    if(l > max_len) {
+                        return -1;
+                    }
+                } else {
+                    j++;
+                }
+            }
+            if(j == 0) {
+                hexbuf[l] = '\0';
+            } else {
+                hexbuf[l] = int_to_hex(hexval);
+                hexbuf[l+1] = '\0';
+            }
+        }
+    }
+    
+    return 0;
 }
 
-void signals_to_intseq(uint32_t * dataout)
+static int hex_to_int(char ch)
 {
-    int intidx, bitidx, setidx, size, dif, values_count, arrayidx;
-    uint32_t tmpvalue;
-    
-    intidx = 0;
-    bitidx = 0;
-    setidx = 0;
-    dif = 0;
-    values_count = 0;
-    tmpvalue = 0;
-    
-    for(;setidx < cosim_fs_count ;setidx++) {
-        size = cosim_from_set[setidx].size;
-        if(size <= 32) {
-            if(bitidx + size > 32){
-                dif = bitidx + size - 32;
-                // first part
-                tmpvalue = cosim_from_set[setidx].value;
-                tmpvalue &= (1 << (size - dif)) - 1;
-                tmpvalue <<= bitidx;
-                dataout[intidx] &= ~(((1 << (size - dif)) - 1) << bitidx);
-                dataout[intidx] |= tmpvalue;
-                intidx++;
-                if(intidx >= cosim_fs_bytesize) break;
-                // second part
-                tmpvalue = cosim_from_set[setidx].value;
-                tmpvalue >>= dif;
-                tmpvalue &= (1 << dif) - 1;
-                dataout[intidx] &= ~((1 << dif) - 1);
-                dataout[intidx] = tmpvalue;
-                bitidx = dif;
-            } else {
-                tmpvalue = cosim_from_set[setidx].value;
-                tmpvalue &= (1 << size) - 1;
-                tmpvalue <<= bitidx;
-                // mask for added value
-                dataout[intidx] &= ~(((1 << size) - 1) << bitidx);
-                dataout[intidx] |= tmpvalue;
-                bitidx += size;
-            }
-        } else {
-            values_count = (cosim_from_set[setidx].size / 32) + 1;
-            for(arrayidx = 0; arrayidx < values_count; arrayidx++) {
-                if(arrayidx < (values_count - 1)) {
-                    size = cosim_from_set[setidx].size % 32;
-                } else {
-                    size = 32;
-                }
-                if(bitidx + size > 32){
-                    dif = bitidx + size - 32;
-                    // first part
-                    tmpvalue = cosim_from_set[setidx].ptrvalue[arrayidx];
-                    tmpvalue &= (1 << (size - dif)) - 1;
-                    tmpvalue <<= bitidx;
-                    dataout[intidx] &= ~(((1 << (size - dif)) - 1) << bitidx);
-                    dataout[intidx] |= tmpvalue;
-                    intidx++;
-                    if(intidx >= cosim_fs_bytesize) break;
-                    // second part
-                    tmpvalue = cosim_from_set[setidx].ptrvalue[arrayidx];
-                    tmpvalue >>= dif;
-                    tmpvalue &= (1 << dif) - 1;
-                    dataout[intidx] &= ~((1 << dif) - 1);
-                    dataout[intidx] = tmpvalue;
-                    bitidx = dif;
-                } else {
-                    tmpvalue = cosim_from_set[setidx].value;
-                    tmpvalue &= (1 << size) - 1;
-                    tmpvalue <<= bitidx;
-                    dataout[intidx] &= ~(((1 << size) - 1) << bitidx);
-                    dataout[intidx] |= tmpvalue;
-                    bitidx += size;
-                }
-            }
-        }
-        if (bitidx == 32) {
-            intidx++;
-            bitidx = 0;
-        }
-        if(intidx >= cosim_fs_bytesize) break;
+    if((ch >= '0') && (ch <= '9')) { 
+        return (ch - '0');
     }
+    if((ch >= 'A') && (ch <= 'F')) {
+        return (ch - 'A' + 0xa);
+    }
+    if((ch >= 'a') && (ch <= 'f')) {
+        return (ch - 'a' + 0xa);
+    }
+    return -1;
+}
+
+static char int_to_hex(int num)
+{
+    if((num >= 0) && (num <= 9)) {
+        return ('0' + ((char) num));
+    }
+    if((num >= 10) && (num <= 15)) {
+        return ('a' + ((char) (num - 10)));
+    }
+    return ' ';
 }
 
 // ***** external interface to myhdl_vhpi_core *****
 
 /** startup_simulation
  * called on the start of simulation
- * 
+ * @param time current simulation time. Must be zero
+ * @param time_res minimum time step in VHDL that correspond with one MyHDL time step
+ * @param from_signals signal descriptions for MyHDL driven signals
+ * @param to_signals signal descriptions for MyHDL read signals
  */
 int startup_simulation (uint64_t time, uint64_t time_res, ghdl_string * from_signals, ghdl_string * to_signals)
 {
@@ -531,7 +590,7 @@ int startup_simulation (uint64_t time, uint64_t time_res, ghdl_string * from_sig
     char buf[MAX_STRING];
     char *bufptr, *token;
     
-    debug("VHPI: startup_simulation:\n time = %ld\n time_res = %ld\n from_signals = <%s>\n to_signals = <%s>\n", (unsigned long) time, (unsigned long) time_res, from_signals->base, to_signals->base);
+    debug("\nVHPI: startup_simulation:\n time = %llu\n time_res = %llu\n from_signals = <%s>\n to_signals = <%s>\n", (unsigned long long) time, (unsigned long long) time_res, from_signals->base, to_signals->base);
     
     // call once only
     if (cosim_init_flag) {
@@ -545,7 +604,7 @@ int startup_simulation (uint64_t time, uint64_t time_res, ghdl_string * from_sig
     myhdl_curtime = time / vhdl_time_res;
     myhdl_next_trigger = 0;
     
-    debug("VHPI: PID = %d\n", getpid());
+    debug("VHPI: PID = %d.\n", getpid());
 #ifdef VHPI_GDBWAIT
     debug("VHPI: Waiting 10 seconds to gdb attach.\n");
     sleep(10);
@@ -553,28 +612,30 @@ int startup_simulation (uint64_t time, uint64_t time_res, ghdl_string * from_sig
 #endif
     
     retval = init_connection();
-    if(retval < 0) return retval;
+    if(retval < 0) {
+        return retval;
+    }
     
-    strncpy(cosim_from_signals, from_signals->base, MAX_STRING);
-    strncpy(cosim_to_signals, to_signals->base, MAX_STRING);
+    strncpy(cosim_from_signals, from_signals->base, from_signals->bounds->len);
+    strncpy(cosim_to_signals, to_signals->base, to_signals->bounds->len);
     
     // parse info
     cosim_fs_count = parse_init(cosim_from_signals);
     if(cosim_fs_count < 0) {
-        debug("VHPI: parse error in from_signals (%s)\n", cosim_from_signals);
+        debug("VHPI: parse error in from_signals (%s).\n", cosim_from_signals);
         return -1;
     }
     cosim_ts_count = parse_init(cosim_to_signals);
     if(cosim_ts_count < 0) {
-        debug("VHPI: parse error in to_signals (%s)\n", cosim_to_signals);
+        debug("VHPI: parse error in to_signals (%s).\n", cosim_to_signals);
         return -1;
     }
     
-    cosim_from_set = (sigentry_t *) malloc(cosim_fs_count*sizeof(sigentry_t));
-    cosim_to_set = (sigentry_t *) malloc(cosim_ts_count*sizeof(sigentry_t));
+    cosim_from_set = (sigentry_t *) malloc(cosim_fs_count * sizeof(sigentry_t));
+    cosim_to_set = (sigentry_t *) malloc(cosim_ts_count * sizeof(sigentry_t));
     if((cosim_from_set == NULL) || (cosim_to_set == NULL)) {
         d_perror("malloc");
-        debug("VHPI: malloc error\n");
+        debug("VHPI: malloc error.\n");
         return -1;
     }
     
@@ -585,24 +646,19 @@ int startup_simulation (uint64_t time, uint64_t time_res, ghdl_string * from_sig
         // first element: name
         strncpy(cosim_from_set[i].name, token, MAX_STRING);
         token = strtok_r(NULL, " ", &bufptr);
-        // second element: bitsize
-        sscanf(token, "%i", &(cosim_from_set[i].size));
+        // second element: reported bitsize
+        sscanf(token, "%i", &(cosim_from_set[i].size_reported));
         token = strtok_r(NULL, " ", &bufptr);
-        // additional: value initialization
-        cosim_from_set[i].flags = 0;
-        if(cosim_from_set[i].size <= 32) cosim_from_set[i].value = 0;
-        else {
-            cosim_from_set[i].ptrvalue = (uint32_t *) malloc(((cosim_from_set[i].size/32)+1)*sizeof(uint32_t));
-            if(cosim_from_set[i].ptrvalue == NULL) {
-                d_perror("malloc");
-                debug("VHPI: malloc error.\n");
-                return -1;
-            }
-        }
+        // additional: flags and pointers initialization
+        cosim_from_set[i].flags = FLAG_UNCONFIGURED;
+        cosim_from_set[i].bounds.left = 0;
+        cosim_from_set[i].bounds.right = 0;
+        cosim_from_set[i].bounds.dir = 0;
+        cosim_from_set[i].bounds.len = 0;
+        cosim_from_set[i].ptrvector = NULL;
         // bitsize increment
-        cosim_fs_bitsize += cosim_from_set[i].size;
+        cosim_fs_bitsize += cosim_from_set[i].size_reported;
     }
-    cosim_fs_bytesize = (cosim_fs_bitsize / 32) + 1;
 
     // extract TO data
     strncpy(buf, cosim_to_signals, MAX_STRING);
@@ -612,28 +668,33 @@ int startup_simulation (uint64_t time, uint64_t time_res, ghdl_string * from_sig
         strncpy(cosim_to_set[i].name, token, MAX_STRING);
         token = strtok_r(NULL, " ", &bufptr);
         // second element: bitsize
-        sscanf(token, "%i", &(cosim_to_set[i].size));
+        sscanf(token, "%i", &(cosim_to_set[i].size_reported));
         token = strtok_r(NULL, " ", &bufptr);
         // additional: value initialization
-        cosim_to_set[i].flags = FLAG_INITIAL_VAL;
-        if(cosim_to_set[i].size <= 32) cosim_to_set[i].value = 0;
-        else {
-            cosim_to_set[i].ptrvalue = (uint32_t *) malloc(((cosim_to_set[i].size/32)+1)*sizeof(uint32_t));
-            if(cosim_to_set[i].ptrvalue == NULL) {
-                d_perror("malloc");
-                debug("VHPI: malloc error.\n");
-                return -1;
-            }
-        }
+        cosim_to_set[i].flags = FLAG_INITIAL_VAL | FLAG_UNCONFIGURED;
+        cosim_to_set[i].bounds.left = 0;
+        cosim_to_set[i].bounds.right = 0;
+        cosim_to_set[i].bounds.dir = 0;
+        cosim_to_set[i].bounds.len = 0;
+        cosim_to_set[i].ptrvector = NULL;
         // bitsize increment
-        cosim_ts_bitsize += cosim_to_set[i].size;
+        cosim_ts_bitsize += cosim_to_set[i].size_reported;
     }
-    cosim_ts_bytesize = (cosim_ts_bitsize / 32) + 1;
     
-    debug("VHPI: FROM %d signals => %d bits in %d bytes\n", cosim_fs_count, cosim_fs_bitsize, cosim_fs_bytesize);
-    debug("VHPI: TO %d signals => %d bits in %d bytes\n", cosim_ts_count, cosim_ts_bitsize, cosim_ts_bytesize);
+    // TO signal copy, for keeping track of changes
+    cosim_to_sigcopy = (uint8_t *) malloc(cosim_ts_bitsize * sizeof(uint8_t));
+    if(cosim_to_sigcopy == NULL) {
+        d_perror("malloc");
+        debug("VHPI: malloc error.\n");
+        return -1;
+    }
+    // 'U' value default
+    memset(cosim_to_sigcopy, 0, cosim_ts_bitsize);
     
-    snprintf(buf, MAX_STRING, "FROM %ld %s ", (unsigned long) time, cosim_from_signals);
+    debug("VHPI: FROM %d signals => %d bits\n", cosim_fs_count, cosim_fs_bitsize);
+    debug("VHPI: TO %d signals => %d bits\n", cosim_ts_count, cosim_ts_bitsize);
+    
+    snprintf(buf, MAX_STRING, "FROM %lu %s ", (unsigned long) time, cosim_from_signals);
     
     nbytes = sendrecv(buf, MAX_STRING);
     if(nbytes <= 0) return retval;
@@ -644,21 +705,24 @@ int startup_simulation (uint64_t time, uint64_t time_res, ghdl_string * from_sig
         return -1;
     }
     
-    snprintf(buf, MAX_STRING, "TO %ld %s ", (unsigned long) time, cosim_to_signals);
+    snprintf(buf, MAX_STRING, "TO %lu %s ", (unsigned long) time, cosim_to_signals);
     
     nbytes = sendrecv(buf, MAX_STRING);
-    if(nbytes <= 0) return retval;
+    if(nbytes <= 0) {
+        return retval;
+    }
     
     if((buf[0] != 'O') && (buf[0] != 'K')) {
         debug("VHPI: error, MyHDL returned (%s).\n", buf);
         return -1;
     }
     
-    // send start
     snprintf(buf, MAX_STRING, "START ");
     
     nbytes = sendrecv(buf, MAX_STRING);
-    if(nbytes <= 0) return retval;
+    if(nbytes <= 0) {
+        return retval;
+    }
     
     if((buf[0] != 'O') && (buf[0] != 'K')) {
         debug("VHPI: error, MyHDL returned (%s).\n", buf);
@@ -671,58 +735,92 @@ int startup_simulation (uint64_t time, uint64_t time_res, ghdl_string * from_sig
 }
 
 /** update_signal
- * called on a change event on datain signals
+ * called on a VHDL event (on datain or after delay)
+ * @param datain : input vector for TO signals
+ * @param dataout : output vector for FROM signals
+ * @param time : current VHDL time
  * 
  */
-int update_signal (ghdl_int_array * datain, ghdl_int_array * dataout, uint64_t time)
+int update_signal (ghdl_std_logic_vector * datain, ghdl_std_logic_vector * dataout, uint64_t time)
 {
-    int retval, nbytes, i, j, valbytes, valindex;
+    int retval, nbytes, i, j, k, l;
     char buf[MAX_STRING];
     char val[MAX_STRING];
-    char * bufptr, *valptr, *token;
+    char * bufptr, *token;
     
     uint64_t myhdl_temptime;
     
-    debug("VHPI: update_signal:\n datain = %p\n dataout = %p\n time = %ld\n", datain, dataout, (unsigned long) time);
+    debug("VHPI: update_signal:\n datain = %p\n dataout = %p\n time = %llu\n", datain, dataout, (unsigned long long) time);
     
     retval = init_connection();
-    if(retval < 0) return UPDATE_ERROR;
+    if(retval < 0) {
+        return UPDATE_ERROR;
+    }
     
-    d_print_rawdata(datain->base, cosim_ts_bytesize, "datain");
+    d_print_rawdata(datain, "datain");
     
-    // convert datain to signal values (to put in TO signal set)
-    intseq_to_signals(datain_ptr);
+    // check configured state
+    if(cosim_to_set[0].flags & FLAG_UNCONFIGURED) {
+        sigset_config(cosim_to_set, cosim_ts_count, datain);
+    } else {
+        // check dir and len
+        if (cosim_to_set[0].bounds.dir != datain->bounds->dir) {
+            debug("VHPI: Inconsistent argument datain->bounds->dir(%d), should be (%d).\n", datain->bounds->dir, cosim_to_set[0].bounds.dir);
+            return UPDATE_ERROR;
+        }
+        if(cosim_ts_bitsize != datain->bounds->len) {
+            debug("VHPI: Inconsistent bitsize in datain->bounds->len(%d), should be (%d).\n", datain->bounds->len, cosim_ts_bitsize);
+            return UPDATE_ERROR;
+        }
+    }
+    if(cosim_from_set[0].flags & FLAG_UNCONFIGURED) {
+        sigset_config(cosim_from_set, cosim_fs_count, dataout);
+    } else {
+        if (cosim_from_set[0].bounds.dir != dataout->bounds->dir) {
+            debug("VHPI: Inconsistent argument dataout->bounds->dir(%d), should be (%d).\n", dataout->bounds->dir, cosim_from_set[0].bounds.dir);
+            return UPDATE_ERROR;
+        }
+        if(cosim_fs_bitsize != dataout->bounds->len) {
+            debug("VHPI: Inconsistent bitsize in dataout->bounds->len(%d), should be (%d).\n", dataout->bounds->len, cosim_fs_bitsize);
+            return UPDATE_ERROR;
+        }
+    }
+    
+    // update vector on signal set TO
+    for(i = 0; i < cosim_ts_count; i++) {
+        cosim_to_set[i].ptrvector = datain;
+    }
     
     d_print_sigset(cosim_to_set, cosim_ts_count, "TO_set");
     
     // prepare time counter
     vhdl_curtime = time;
     myhdl_temptime = time / vhdl_time_res;
-    nbytes = snprintf(buf, MAX_STRING, "%ld ", (unsigned long) myhdl_temptime);
-    debug("VHPI: prev_myhdl_time = %ld , myhdl_time = %ld\n", (unsigned long) myhdl_curtime, (unsigned long) myhdl_temptime);
+    nbytes = snprintf(buf, MAX_STRING, "%llu ", (unsigned long long) myhdl_temptime);
+    debug("VHPI: prev_myhdl_time = %llu , myhdl_time = %llu\n", (unsigned long long) myhdl_curtime, (unsigned long long) myhdl_temptime);
     myhdl_curtime = myhdl_temptime;
-    bufptr = &(buf[nbytes]);
     
+    sigset_to_update(datain);
+    
+    bufptr = &(buf[nbytes]);
     for(i = 0; i < cosim_ts_count; i++) {
         if(cosim_to_set[i].flags & FLAG_HAS_CHANGED) {
             // convert value to string
-            if(cosim_to_set[i].size > 32) {
-                valbytes = 0;
-                for(j = (cosim_to_set[i].size / 32); j >= 0 ; j--) {
-                    valptr = &(val[valbytes]);
-                    valbytes = snprintf(valptr, MAX_STRING - valbytes, "%x_", cosim_to_set[i].ptrvalue[j]);
-                }
-            } else {
-                snprintf(val, MAX_STRING, "%x", cosim_to_set[i].value);
+            if(std_logic_vector_to_string(cosim_to_set[i].ptrvector, &(cosim_to_set[i].bounds), NULL, val, MAX_STRING) < 0) {
+                debug("VHPI: String conversion error on signal %s\n", cosim_to_set[i].name);
+                return UPDATE_ERROR;
             }
             nbytes += snprintf(bufptr, MAX_STRING - nbytes, "%s %s ", cosim_to_set[i].name, val);
             bufptr = &(buf[nbytes]);
             cosim_to_set[i].flags &= ~FLAG_HAS_CHANGED;
+            debug("VHPI: signal %s has changed.\n", cosim_to_set[i].name);
         }
     }
     
     nbytes = sendrecv(buf, MAX_STRING);
-    if(nbytes < 0) return UPDATE_ERROR;
+    if(nbytes < 0) {
+        return UPDATE_ERROR;
+    }
     if(nbytes == 0) {
         debug("VHPI: MyHDL pipe closed.\n");
         return UPDATE_END;
@@ -732,27 +830,44 @@ int update_signal (ghdl_int_array * datain, ghdl_int_array * dataout, uint64_t t
     // format: <time> [<data-1> ... <data-n>]
     
     token = strtok_r(buf, " ", &bufptr);
-    sscanf(token, "%ld", (unsigned long *) &myhdl_temptime);
-    debug("VHPI: cur_myhdl_time = %ld , next_myhdl_time = %ld\n", (unsigned long) myhdl_curtime, (unsigned long) myhdl_temptime);
+    sscanf(token, "%llu", (unsigned long long *) &myhdl_temptime);
+    debug("VHPI: cur_myhdl_time = %lld , next_myhdl_time = %lld\n", (unsigned long long) myhdl_curtime, (unsigned long long) myhdl_temptime);
     
     for(i = 0; i < cosim_fs_count; i++) {
         token = strtok_r(NULL, " ", &bufptr);
-        if(token == NULL) break;
+        if(token == NULL) {
+            break;
+        }
         // save data
-        if(cosim_from_set[i].size > 32) {
-            // read 8 bytes at a time (enough to hold 32 bits in hexadecimal format)
-            val[8] = '\0';
-            valindex = 0;
-            for(j = strlen(token) - 8; j > 0 ; j -= 8) {
-                strncpy(val, token, 8);
-                sscanf(val, "%i", &(cosim_from_set[i].ptrvalue[valindex]));
-                valindex++;
+        for(j = 0, k = strlen(token); k >= 0; k--) {
+            retval = hex_to_int(token[k]);
+            if(retval < 0) {
+                continue;
             }
-            strncpy(val, token, j);
-            val[j] = '\0';
-            sscanf(val, "%i", &(cosim_from_set[i].ptrvalue[valindex]));
+            for(l = 0; l < 4; l++, j++) {
+                if(retval & 0x1) {
+                    val[j] = STD_LOGIC_VAL1;
+                } else {
+                    val[j] = STD_LOGIC_VAL0;
+                }
+                retval >>= 1;
+            }
+        }
+        // account for additional zeros
+        for(; j < cosim_from_set[i].bounds.len; j++) {
+            val[j] = STD_LOGIC_VAL0;
+        }
+        // val has binary info. Update dataout vector
+        if(dataout->bounds->dir) {
+            // downto
+            for(j = 0, k = cosim_from_set[i].bounds.right; k <= cosim_from_set[i].bounds.left; j++, k++) {
+                dataout->base[(dataout->bounds->len - 1) - k] = val[j];
+            }
         } else {
-            sscanf(token, "%i", &(cosim_from_set[i].value));
+            // to
+            for(j = 0, k = cosim_from_set[i].bounds.left; k <= cosim_from_set[i].bounds.right; j++, k++) {
+                dataout->base[k] = val[j];
+            }
         }
     }
     
@@ -764,20 +879,27 @@ int update_signal (ghdl_int_array * datain, ghdl_int_array * dataout, uint64_t t
         retval = UPDATE_DELTA;
     } else {
         debug("VHPI: update %d signals from myhdl.\n", cosim_fs_count);
-        signals_to_intseq(dataout->base);
-        retval = UPDATE_SIGNAL;
+        // hack: VHDL time may be ahead of MyHDL time.
+        // if that's the case, return UPDATE_DELTA until MyHDL time 
+        // make its advance.
+        if(myhdl_temptime < myhdl_curtime) {
+            debug("VHPI: myhdl time retarded from vhdl time.\n");
+            retval = UPDATE_DELTA;
+        } else {
+            retval = UPDATE_SIGNAL;
+        }
     }
     
-    d_print_rawdata(dataout->base, cosim_fs_bytesize, "dataout");
+    d_print_rawdata(dataout, "dataout");
     
     // time check
     if(myhdl_temptime > myhdl_curtime) {
-        debug("VHPI: myhdl call for time step to %ld.\n", (unsigned long) myhdl_temptime);
+        debug("VHPI: myhdl call for time step to %llu.\n", (unsigned long long) myhdl_temptime);
         myhdl_next_trigger = myhdl_temptime;
         retval = UPDATE_TIME;
     }
     
-    // hack: update outputs on time 0 
+    // hack: force update outputs on time 0 
     if((retval == UPDATE_DELTA) && (vhdl_curtime == 0)) {
         for(i = 0; i < cosim_ts_count; i++) {
             if(cosim_to_set[i].flags & FLAG_INITIAL_VAL) {
@@ -791,20 +913,27 @@ int update_signal (ghdl_int_array * datain, ghdl_int_array * dataout, uint64_t t
     
     return retval;
 }
+/** next_timetrigger
+ * calculate delay value until next delay time event
+ * @param time : current VHDL time
+ * @return delay value to use on a "wait for" statement
+ * 
+ */
   
-uint64_t next_timetrigger(uint64_t curtime)
+uint64_t next_timetrigger(uint64_t time)
 {
     uint64_t myhdl_temptime, delta;
     
-    myhdl_temptime = curtime / vhdl_time_res;
+    myhdl_temptime = time / vhdl_time_res;
     
-    debug("VHPI: next_timetrigger: temp_time %ld\n", (unsigned long) myhdl_temptime);
+    debug("VHPI: next_timetrigger: temp_time %llu\n", (unsigned long long) myhdl_temptime);
     
     if(myhdl_next_trigger > myhdl_temptime) {
         delta = (myhdl_next_trigger - myhdl_temptime) * vhdl_time_res;
-        debug("VHPI: next_timetrigger: next VHDL trigger in %ld\n", (unsigned long) delta);
+        debug("VHPI: next_timetrigger: next VHDL trigger in %llu\n", (unsigned long long) delta);
         return delta;
     } else {
+        // wait for smallest time step => 1-step in MyHDL
         return vhdl_time_res;
     }
 }

@@ -2,7 +2,6 @@ library ieee;
 use ieee.std_logic_1164.all;
 
 use work.myhdl_ghdl_core;
-use work.ghdl_env.all;
 use work.dff_clkout;
 
 entity dut_dff_clkout is

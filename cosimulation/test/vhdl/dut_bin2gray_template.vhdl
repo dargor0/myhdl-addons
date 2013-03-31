@@ -2,23 +2,24 @@ library ieee;
 use ieee.std_logic_1164.all;
 
 use work.myhdl_ghdl_core;
-use work.dff;
+use work.bin2gray;
 
-entity dut_dff is
-end entity dut_dff;
+entity dut_bin2gray is
+    generic(C_WIDTH : integer := MYHDL_TEMPLATE_C_WIDTH );
+end entity dut_bin2gray;
 
-architecture sim of dut_dff is
+architecture sim of dut_bin2gray is
 
-    -- TO: q
-    constant to_width : integer := 1;
-    -- FROM: d, clk, reset
-    constant from_width : integer := 3;
+    -- B
+    constant to_width : integer := C_WIDTH;
+    -- G
+    constant from_width : integer := C_WIDTH;
     -- time res
     constant timeres : time := 1 ns;
     -- input information data (to MyHDL)
-    constant to_info : string := "q 1 ";
+    constant to_info : string := "G " & integer'image(to_width);
     -- output information data (from MyHDL)
-    constant from_info : string := "d 1 clk 1 reset 1 ";
+    constant from_info : string := "B " & integer'image(from_width);
     
     -- signals
     signal to_vec : std_logic_vector((to_width - 1) downto 0) := (others => '0');
@@ -36,11 +37,10 @@ architecture sim of dut_dff is
                 To_sigvector => to_vec,
                 From_sigvector => from_vec);
                 
-        dut_inst : entity dff
+        dut_inst : entity bin2gray
+            generic map (C_WIDTH => C_WIDTH)
             port map (
-                q => to_vec(0),
-                d => from_vec(0),
-                clk => from_vec(1),
-                reset => from_vec(2));
+                B => from_vec,
+                G => to_vec);
 
 end architecture sim;
