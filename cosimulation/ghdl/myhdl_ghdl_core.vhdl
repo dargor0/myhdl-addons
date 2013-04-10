@@ -40,10 +40,6 @@ end entity myhdl_ghdl_core;
 
 architecture sim of myhdl_ghdl_core is
 
-    constant to_siginfo_integer_count : integer := (C_TO_WIDTH / 32) + 1;
-    constant from_integer_count       : integer := (C_FROM_WIDTH / 32) + 1;
-    constant from_lastint_size        : integer := (C_FROM_WIDTH mod 32);
-
     begin
         startup : process
             variable ret : integer := 0;
