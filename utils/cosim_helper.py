@@ -59,7 +59,7 @@ def gen_cosim_testbench(source, generics_values={}):
         filecontent = StringIO.StringIO(source.read())
         source.seek(t)
     elif isinstance(source, StringIO.StringIO):
-        filecontent = initial_content
+        filecontent = source
     else:
         raise ValueError("Unable to get any VHDL source with %s" % repr(source))
     
@@ -69,6 +69,8 @@ def gen_cosim_testbench(source, generics_values={}):
     tb_name = "%s_tb" % dut_name
     for g, v in generics_values.items():
         vp.model.set_generic_value(g, v)
+        
+    vcg = vhdl_parser.vhdl_codegen(vp.model)
     
     ghdl_constdata = {"to_width": 0, "from_width": 0, "to_info": "", "from_info": ""}
     signal_decl = []
@@ -82,23 +84,39 @@ def gen_cosim_testbench(source, generics_values={}):
         slen = sdet["bitlen"]
         signal_decl.append("signal %s : %s;" % (sname, sdet["solveddef"]))
         port_map.append("%s => %s" % (sname, sname))
-        if sdata["dir"] == "in":
-            ghdl_constdata["from_info"] += "%s %d " % (sname, slen)
-            ghdl_constdata["from_width"] += slen
-            if slen == 1:
-                sidx = str(to_idx)
-            else:
-                sidx = "%d downto %d" % ((slen+to_idx-1), to_idx)
-            signal_mapping.append("to_vec(%s) <= %s;" % (sidx, sname))
-            to_idx += slen
-        elif sdata["dir"] == "out":
+        if sdata["dir"] == "out":
             ghdl_constdata["to_info"] += "%s %d " % (sname, slen)
             ghdl_constdata["to_width"] += slen
             if slen == 1:
-                sidx = str(from_idx)
+                sidx = str(to_idx)
+                if sdet["base"] != "std_logic":
+                    conv_sname = vcg.type_conversion(sdet["base"], "std_logic") % sname
+                else:
+                    conv_sname = sname
             else:
-                sidx = "%d downto %d" % ((slen+from_idx-1), from_idx)
-            signal_mapping.append("%s <= from_vec(%s);" % (sname, sidx))
+                sidx = "%d downto %d" % ((slen+to_idx-1), to_idx)
+                if sdet["base"] != "std_logic_vector":
+                    conv_sname = vcg.type_conversion(sdet["base"], "std_logic_vector") % sname
+                else:
+                    conv_sname = sname
+            signal_mapping.append("to_vec(%s) <= %s;" % (sidx, conv_sname))
+            to_idx += slen
+        elif sdata["dir"] == "in":
+            ghdl_constdata["from_info"] += "%s %d " % (sname, slen)
+            ghdl_constdata["from_width"] += slen
+            if slen == 1:
+                sidx = "from_vec(%d)" % from_idx
+                if sdet["base"] != "std_logic":
+                    conv_sname = vcg.type_conversion("std_logic", sdet["base"]) % sidx
+                else:
+                    conv_sname = sidx
+            else:
+                sidx = "from_vec(%d downto %d)" % ((slen+from_idx-1), from_idx)
+                if sdet["base"] != "std_logic_vector":
+                    conv_sname = vcg.type_conversion("std_logic_vector", sdet["base"]) % sidx
+                else:
+                    conv_sname = sidx
+            signal_mapping.append("%s <= %s;" % (sname, conv_sname))
             from_idx += slen
         else:
             raise ValueError("Unsupported direction '%s' for signal '%s'" % (sdata["dir"], sname))
@@ -106,14 +124,21 @@ def gen_cosim_testbench(source, generics_values={}):
     for gname, gdata in vp.model.get_generics_iter():
         generic_map.append("%s => %s" % (gname, vp.model.get_constant_value(gname)))
     
-    vcg = vhdl_parser.vhdl_codegen(vp.model)
     dut_decl = "\n".join(signal_decl)
     dut_decl += "\n" + vcg.generate_component()
     decl_dict = dict(ghdl_constdata)
     decl_dict["dut_decl"] = dut_decl
     
     signal_map = "\n".join(signal_mapping)
-    dut_inst = "%s_dut : %s generic map (\n    %s\n) port map (\n    %s\n);\n" % (dut_name, dut_name, ",\n    ".join(generic_map), ",\n    ".join(port_map))
+    if len(generic_map) > 0:
+        gm_str = "generic map (\n    %s\n)" % ",\n    ".join(generic_map)
+    else:
+        gm_str = ""
+    if len(port_map) > 0:
+        pm_str = "port map (\n    %s\n)" % ",\n    ".join(port_map)
+    else:
+        pm_str = ""
+    dut_inst = "%s_dut : %s %s %s;\n" % (dut_name, dut_name, gm_str, pm_str)
     
     cosim_decl = _cosim_template_declaration % decl_dict
     cosim_code = _cosim_template_code % {"dut_inst": dut_inst, "signal_map": signal_map}

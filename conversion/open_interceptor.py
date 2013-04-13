@@ -33,10 +33,16 @@ _original_open = __builtin__.open
 
 class StringIO_noclose(StringIO.StringIO):
     def close(self):
-        return None
+        pass
         
     def true_close(self):
         return StringIO.close(self)
+        
+    def __enter__(self):
+        return self
+        
+    def __exit__(self, exc_type, exc_value, traceback):
+        pass
         
 class open_interceptor():
     """
@@ -75,6 +81,7 @@ class interceptor():
     def __enter__(self):
         self.ic_ref.intercept_enter()
         setattr(self.built_module, "open", intercept_open)
+        return self
         
     def __exit__(self, exc_type, exc_value, traceback):
         self.ic_ref.intercept_exit()
@@ -95,4 +102,5 @@ def intercept_open(name, mode='r', buffering=0):
     
 def current_interceptor():
     global _replaced_stack
-    return _replaced_stack[-1]
+    if len(_replaced_stack) > 0:
+        return _replaced_stack[-1]

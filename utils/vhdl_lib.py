@@ -2,7 +2,10 @@
 # -*- coding: utf-8 -*-
 
 #
-# vhdl_parser: simple parser for VHDL source files
+# vhdl_lib: base library for VHDL source files
+# * Base model for VHDL source files
+# * Parser object
+# * Code generator
 #
 # Author:  Oscar Diaz <oscar.dc0@gmail.com>
 # Version: 0.1
@@ -190,7 +193,6 @@ class vhdl_model(object):
                 raise ValueError("You must pass a type or a reference value.")
             elif sigtype is not None:
                 # type name is defined
-#                print "DEBUG TEST: sigtype %s" % repr(sigtype)
                 t = self._check_type(sigtype)
             elif refvalue is not None:
                 # guess value
@@ -274,7 +276,6 @@ class vhdl_model(object):
     
     def _check_type(self, typestr):
         s = [x.strip() for x in typestr.partition("(")]
-#        print "DEBUG TEST: partition is %s" % repr(s)
         if s[0] not in _vhdl_validtypes:
             raise ValueError("Invalid VHDL type: %s" % typestr)
         if s[1] == "":
@@ -343,26 +344,6 @@ class vhdl_codegen(object):
             sret += "\n"
         return sret
             
-#    def generate_entity_section(self, component=False):
-#        """
-#        Generate entity section
-#        """
-#        if component:
-#            sret = "component %s\n" % self.model._entity
-#        else:
-#            sret = "entity %s is\n" % self.model._entity
-#        stmp = self.generate_generics_section()
-#        if stmp != "":
-#            sret += self.add_tab(stmp, 1) + ";\n"
-#        stmp = self.generate_ports_section()
-#        if stmp != "":
-#            sret += self.add_tab(stmp, 1) + ";\n"
-#        if component:
-#            sret += "end component;\n"
-#        else:
-#            sret += "end entity %s;\n" % self.model._entity
-#        return sret
-        
     def generate_entity_section(self, secbase="entity"):
         """
         Generate entity section
@@ -417,7 +398,6 @@ class vhdl_codegen(object):
         """
         Generate a component definition for this object.
         """
-        #return self.generate_entity_section(True)
         return self.generate_entity_section("component")
 
     def generate_generic_declaration(self, generic=None, with_default=False):
@@ -487,6 +467,24 @@ class vhdl_codegen(object):
         else:
             # TODO: guess vector here
             return "%s(%s %s %s)" % tuple(type_obj)
+            
+    def type_conversion(self, from_type, to_type):
+        # TODO: better heuristics for type conversions
+        if from_type == to_type:
+            return None
+        if to_type == "std_logic_vector":
+            if from_type in ("unsigned", "signed"):
+                return "std_logic_vector(%s)"
+            elif from_type == "integer":
+                return "std_logic_vector(to_signed(%s))"
+            elif from_type in ("positive", "natural"):
+                return "std_logic_vector(to_unsigned(%s))"
+        elif to_type in ("signed", "unsigned"):
+            return str(to_type) + "(%s)"
+        elif to_type == "integer":
+            return "to_integer(%s)"
+        else:
+            return "%s"
     
     def to_valid_str(self, str_in):
         """
@@ -571,6 +569,7 @@ class vhdl_parser(object):
             self.filecontent = initial_content
         else:
             raise ValueError("Unable to set initial content with %s" % repr(initial_content))
+        self.filecontent.seek(0)
         
     # main methods
     def parse(self):
@@ -591,8 +590,6 @@ class vhdl_parser(object):
         # next section
         while idx < len(token_list):
             sec = token_list[idx]
-#            print "DEBUG: token_list[%d] = %s" % (idx, repr(token_list[idx]))
-#            print "DEBUG: current sec: >>>%s<<<" % sec
             # ignore comments (NOTE: could be saved if tied to a keyword, TODO)
             if sec.startswith("--"):
                 idx += 1
@@ -672,8 +669,6 @@ class vhdl_parser(object):
                     pass
                 # add line,col info to all strings
                 for i in range(len(split_line)):
-#                    print "DEBUG: line >>>%s<<<" % line
-#                    print "DEBUG split_line[%d] = %s" % (i, repr(split_line[i]))
                     colnum = line.find(split_line[i]) + 1
                     meta = None
                     if split_line[i].startswith("--"):
@@ -829,7 +824,6 @@ class vhdl_parser(object):
         # and 'end architecture' statements
         startline, col = line[0]._getlinecol()
         endline, col = line[-1]._getlinecol()
-#        print "DEBUG ARCH startline %d endline %d" % (startline, endline)
         startline += 1
         linecount = 0
         self.filecontent.seek(0)
