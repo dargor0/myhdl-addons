@@ -22,18 +22,57 @@
 #
 
 import re
+import os
 import inspect
 import warnings
 from myhdl import ToVHDLError, ToVHDLWarning, intbv
 
+import myhdl
+from myhdl import *
 from myhdl.conversion._misc import _genUniqueSuffix
 from myhdl.conversion._analyze import (_analyzeSigs, _analyzeGens, _analyzeTopFunc,
                                        _enumTypeSet)
+
+# current MyHDL 0.8 import
+#from myhdl.conversion._toVHDL import (toVHDL, _ToVHDLConvertor, constwires, 
+#                                      _converting, _checkArgs, _flatten, _makeDoc,
+#                                      _annotateTypes, _writeFileHeader, 
+#                                      _writeCustomPackage, _writeModuleHeader, 
+#                                      _writeFuncDecls, _writeCompDecls, 
+#                                      _writeModuleFooter, _version, 
+#                                      _enumPortTypeSet, _writeConstants, 
+#                                      _writeTypeDefs, _shortversion)
+                                      
 from myhdl.conversion._toVHDL import (toVHDL, _ToVHDLConvertor, constwires, 
-                                      _converting, _shortversion, _checkArgs, _flatten, 
-                                      _annotateTypes, _makeDoc, _writeFileHeader, 
-                                      _writeCustomPackage, _writeModuleHeader, _writeFuncDecls, 
-                                      _writeCompDecls, _writeModuleFooter)
+                                      _converting, _checkArgs, _flatten, _makeDoc,
+                                      _annotateTypes, _writeFileHeader, 
+                                      _writeCustomPackage, _writeModuleHeader, 
+                                      _writeFuncDecls, _writeCompDecls, 
+                                      _writeModuleFooter)
+                                      
+# Version Hack: MyHDL 0.7 doesn't define some objects
+try:
+    from myhdl.conversion._analyze import _constDict
+except:
+    _constDict = {}
+try:
+    from myhdl.conversion._toVHDL import _shortversion
+except:
+    from myhdl.conversion._toVHDL import _version
+try:
+    from myhdl.conversion._toVHDL import _enumPortTypeSet
+except:
+    pass
+try:
+    from myhdl.conversion._toVHDL import _writeConstants
+except:
+    pass
+try:
+    from myhdl.conversion._toVHDL import _writeTypeDefs
+except:
+    pass
+# ****
+                                      
 from myhdl.conversion._toVHDLPackage import _package
 from myhdl._extractHierarchy import (_memInfoMap, _UserCode)
 
@@ -238,13 +277,19 @@ class _ToVHDL_kh_Convertor(_ToVHDLConvertor):
                     # recursive convertor: create a new one
                     convertor = _ToVHDL_kh_Convertor()
                     convertor.maxdepth = self.maxdepth
+                    convertor.no_component_files = self.no_component_files
                     if self.maxdepth is not None:
                         convertor.maxdepth -= 1
                         
                 # copy some attributes
-                for attr in ("header", "no_myhdl_header", "library", "architecture"):
-                    setattr(convertor, attr, getattr(self, attr))
-                convertor.no_myhdl_package = True
+                for attr in _ToVHDLConvertor.__slots__:
+                    if attr not in ("name", "component_declarations", "no_myhdl_package"):
+                        setattr(convertor, attr, getattr(self, attr))
+                # Version Hack: MyHDL 0.7 doesn't define all attributes
+                try:
+                    convertor.no_myhdl_package = True
+                except:
+                    pass
                 convertor.name = comp_name
                 
                 # NOTE: toVHDL is non-reentrant function
@@ -252,6 +297,7 @@ class _ToVHDL_kh_Convertor(_ToVHDLConvertor):
                 state_memInfoMap = _memInfoMap.copy()
                 state_genUniqueSuffix = _genUniqueSuffix.i
                 state_enumTypeSet = _enumTypeSet.copy()
+                state_constDict = _constDict.copy()
                 
                 # use open_interceptor to store results on StringIO's
                 i_files = open_interceptor(("vhd", "vhdl"))
@@ -262,6 +308,8 @@ class _ToVHDL_kh_Convertor(_ToVHDLConvertor):
                 _enumTypeSet.update(state_enumTypeSet)
                 _memInfoMap.clear()
                 _memInfoMap.update(state_memInfoMap)
+                _constDict.clear()
+                _constDict.update(state_constDict)
                 
                 for fname, value in i_files.replaced_files.iteritems():
                     if fname in files:
@@ -358,12 +406,18 @@ def _writeSigDecls(f, intf, siglist, memlist):
         
     _original_writeSigDecls(f, intf, siglist, memlist)
     
-def _convertGens(genlist, siglist, memlist, vfile):
+# Version hack: _convertGens changed from MyHDL 0.7 to add memlist, make vfile optional
+def _convertGens(genlist, siglist, memlist, vfile=None):
     intf = genlist.pop(0)
     
     # call original function with a modified siglist: remove discard signals
     # (previously removed in _writeSigDecls)
-    _original_convertGens(genlist, siglist, memlist, vfile)
+    # Version hack: _convertGens changed from MyHDL 0.7 to add memlist
+    if "memlist" in inspect.getargspec(_original_convertGens).args:
+        _original_convertGens(genlist, siglist, memlist, vfile)
+    else:
+        vfile = memlist
+        _original_convertGens(genlist, siglist, vfile)
     
     # instantiations
     for comp_name, comp_data in intf.kh_comp_decls.items():
