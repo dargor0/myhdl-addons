@@ -7,7 +7,7 @@ from toVHDL_kh import toVHDL_kh
 
 oldconv = myhdl.toVHDL
 for k, v in sys.modules.items():
-    if k == "to_vhdl_kh":
+    if k == "toVHDL_kh":
         continue
     elif "toVHDL" in dir(v):
         if v.toVHDL != toVHDL_kh:

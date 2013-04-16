@@ -27,7 +27,7 @@
 import os
 import StringIO
 from datetime import datetime
-import vhdl_parser
+import vhdl_lib
 
 #from myhdl import *
 #from open_interceptor import open_interceptor
