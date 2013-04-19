@@ -21,6 +21,7 @@
 # <http://www.gnu.org/licenses/>.
 #
 
+import sys
 import re
 import os
 import inspect
@@ -30,61 +31,15 @@ from myhdl import ToVHDLError, ToVHDLWarning, intbv
 import myhdl
 from myhdl import *
 from myhdl.conversion._misc import _genUniqueSuffix
-from myhdl.conversion._analyze import (_analyzeSigs, _analyzeGens, _analyzeTopFunc,
-                                       _enumTypeSet)
-
-# current MyHDL 0.8 import
-#from myhdl.conversion._toVHDL import (toVHDL, _ToVHDLConvertor, constwires, 
-#                                      _converting, _checkArgs, _flatten, _makeDoc,
-#                                      _annotateTypes, _writeFileHeader, 
-#                                      _writeCustomPackage, _writeModuleHeader, 
-#                                      _writeFuncDecls, _writeCompDecls, 
-#                                      _writeModuleFooter, _version, 
-#                                      _enumPortTypeSet, _writeConstants, 
-#                                      _writeTypeDefs, _shortversion)
-                                      
-from myhdl.conversion._toVHDL import (toVHDL, _ToVHDLConvertor, constwires, 
-                                      _converting, _checkArgs, _flatten, _makeDoc,
-                                      _annotateTypes, _writeFileHeader, 
-                                      _writeCustomPackage, _writeModuleHeader, 
-                                      _writeFuncDecls, _writeCompDecls, 
-                                      _writeModuleFooter)
-                                      
-# Version Hack: MyHDL 0.7 doesn't define some objects
-try:
-    from myhdl.conversion._analyze import _constDict
-except:
-    _constDict = {}
-try:
-    from myhdl.conversion._toVHDL import _shortversion
-except:
-    from myhdl.conversion._toVHDL import _version
-try:
-    from myhdl.conversion._toVHDL import _enumPortTypeSet
-except:
-    pass
-try:
-    from myhdl.conversion._toVHDL import _writeConstants
-except:
-    pass
-try:
-    from myhdl.conversion._toVHDL import _writeTypeDefs
-except:
-    pass
-# ****
-                                      
-from myhdl.conversion._toVHDLPackage import _package
-from myhdl._extractHierarchy import (_memInfoMap, _UserCode)
-
-from _mod_hierarchy import _HierExtr
+from myhdl.conversion._analyze import (_enumTypeSet, _constDict, _AnalyzeTopFuncVisitor)
+from myhdl.conversion._toVHDL import (toVHDL, _ToVHDLConvertor)
+from myhdl._extractHierarchy import (_HierExtr, _memInfoMap, _UserCode)
 from myhdl._Signal import _Signal
 
 from myhdl.conversion._toVHDL import _writeSigDecls as _original_writeSigDecls
 from myhdl.conversion._toVHDL import _convertGens as _original_convertGens
 
 from open_interceptor import open_interceptor, current_interceptor
-
-import sys
 
 # main object
 class _ToVHDL_kh_Convertor(_ToVHDLConvertor):
@@ -104,18 +59,11 @@ class _ToVHDL_kh_Convertor(_ToVHDLConvertor):
         # 0 will fall back to standard convertor
         # 1 only convert one layer
         
-    def __call__(self, func, *args, **kwargs):
-        # allows monkey patching
-        pass
-
-    # KH Code: added method
     def _convert_filter(self, h, intf, siglist, memlist, genlist):
-        # intended to be a entry point for other uses: 
-        #  code checking, optimizations, etc
-        pass
+        # Keep-hierarchy code as filter
+        self._kh_filter(h, intf, siglist, memlist, genlist)
     
-    # KH Code: added method
-    def _kh_filter(self, h, intf, genlist):
+    def _kh_filter(self, h, intf, siglist, memlist, genlist):
 
         if self.maxdepth == 0:
             # disabled kh
@@ -134,7 +82,7 @@ class _ToVHDL_kh_Convertor(_ToVHDLConvertor):
             found = False
             for idx, ih in enumerate(h.hierarchy):
                 # only read level=2 entries
-                if ih.level > 2:
+                if ih.level != 2:
                     continue
                 if ih.name.startswith(inst_name):
                     comp_inst[ih.name] = ih
@@ -151,9 +99,9 @@ class _ToVHDL_kh_Convertor(_ToVHDLConvertor):
                                  h.hierarchy[missing].level), 
                                  category=ToVHDLWarning)
                 
-        # avoid invalid names in port names
+        # avoid reserved words in port names
         for sname, sig in intf.argdict.items():
-            if sname in _VHDL_Invalid_names:
+            if sname in _VHDL_Reserved_words:
                 # change only key in dict and list member in argnames
                 warnings.warn("Invalid VHDL name for signal %r. Changgenling to %r" % 
                               (sname, "myhdl_" + sname),category=ToVHDLWarning)
@@ -206,6 +154,14 @@ class _ToVHDL_kh_Convertor(_ToVHDLConvertor):
                         discard_siglist.append(sig._name)
                         if mi.name not in discard_memlist:
                             discard_memlist.append(mi.name)
+                            
+        # TODO: memlist discard necessary? Check it.
+        for dname in discard_siglist:
+            for i in range(len(siglist)):
+                if siglist[i]._name == dname:
+                    siglist[i]._clear()
+                    del siglist[i]
+                    break
         
         comp_dict = {}
         for name, inst in comp_inst.items():
@@ -245,7 +201,7 @@ class _ToVHDL_kh_Convertor(_ToVHDLConvertor):
                 inst = comp_inst[inst_name]
                 argdict = cdata[1]
                 
-                # GHDL patch: entity names cannot start with "_" 
+                # entity names (and VHDL identifiers) cannot start with "_" 
                 # (TODO: probably other characters have the same problem)
                 comp_name = func_name
                 if func_name[0] == "_":
@@ -285,11 +241,7 @@ class _ToVHDL_kh_Convertor(_ToVHDLConvertor):
                 for attr in _ToVHDLConvertor.__slots__:
                     if attr not in ("name", "component_declarations", "no_myhdl_package"):
                         setattr(convertor, attr, getattr(self, attr))
-                # Version Hack: MyHDL 0.7 doesn't define all attributes
-                try:
-                    convertor.no_myhdl_package = True
-                except:
-                    pass
+                convertor.no_myhdl_package = True
                 convertor.name = comp_name
                 
                 # NOTE: toVHDL is non-reentrant function
@@ -350,91 +302,71 @@ class _ToVHDL_kh_Convertor(_ToVHDLConvertor):
         # _convertGens don't get intf as argument. Use genlist to pass
         # intf to _convertGens
         genlist.insert(0, intf)
+        
+    def _cleanup(self, siglist):
+        _ToVHDLConvertor._cleanup(self, siglist)
+        self.no_component_files = False
+        self.maxdepth = None
 
 toVHDL_kh = _ToVHDL_kh_Convertor()
-
-def _monkey_convertor():
-    """
-    monkey patch
-    
-    This replaces original _ToVHDLConvertor.__call__ , adding two method calls
-    (_convert_filter() and _kh_filter() ) 
-    and two assignments (subclass added attributes)
-    """
-    patched_code = inspect.getsource(_ToVHDLConvertor.__call__)
-    # patch required lines
-    patch_data = {"intf.name = name": ["self._convert_filter(h, intf, siglist, memlist, genlist)",
-                                       "self._kh_filter(h, intf, genlist)"], 
-                  "self.name = None": ["self.maxdepth = None", 
-                                       "self.no_component_files = False"]}
-    for patch_line, insert_lines in patch_data.items():
-        m = re.search("[ \t]*%s" % patch_line, patched_code)
-        if m is None:
-            raise StandardError("Entry point for monkey patching not found.")
-        # get indentation level
-        indent = m.group().replace(patch_line, "")
-        insert_lines.insert(0, patch_line)
-        patch_str = indent + (("\n" + indent).join(insert_lines))
-        patched_code = patched_code.replace(m.group(), patch_str)
-    # quit initial indent
-    indent = re.search("\A[ \t]*", patched_code).group()
-    patched_code = re.sub("\n"+indent, "\n", patched_code)
-    patched_code = re.sub("\A"+indent, "", patched_code)
-    # compilation
-    patch_object = compile(patched_code, "<monkey>", "exec")
-    patch_scope = {} 
-    exec patch_object in patch_scope
-    _ToVHDL_kh_Convertor.__call__.__func__.__code__ = patch_scope['__call__'].__code__
-    #print "MONKEY: patch done! test it"
-    
-_monkey_convertor()
 
 # override converter functions
 
 def _writeSigDecls(f, intf, siglist, memlist):
-    # component declaration
-    for c in intf.kh_comp_decls.values():
-        print >> f, c[0]
-        print >> f
-        
-    # call original function with a modified siglist: remove discard signals
-    for dname in intf.kh_discard_siglist:
-        for i in range(len(siglist)):
-            if siglist[i]._name == dname:
-                del siglist[i]
-                break
-        
+    if hasattr(intf, "kh_comp_decls"):
+        # component declaration
+        for c in intf.kh_comp_decls.values():
+            print >> f, c[0]
+            print >> f
+    
     _original_writeSigDecls(f, intf, siglist, memlist)
     
-# Version hack: _convertGens changed from MyHDL 0.7 to add memlist, make vfile optional
-def _convertGens(genlist, siglist, memlist, vfile=None):
-    intf = genlist.pop(0)
-    
-    # call original function with a modified siglist: remove discard signals
-    # (previously removed in _writeSigDecls)
-    # Version hack: _convertGens changed from MyHDL 0.7 to add memlist
-    if "memlist" in inspect.getargspec(_original_convertGens).args:
-        _original_convertGens(genlist, siglist, memlist, vfile)
+def _convertGens(genlist, siglist, memlist, vfile):
+    if isinstance(genlist[0],  _AnalyzeTopFuncVisitor):
+        intf = genlist.pop(0)
     else:
-        vfile = memlist
-        _original_convertGens(genlist, siglist, vfile)
+        intf = None
     
-    # instantiations
-    for comp_name, comp_data in intf.kh_comp_decls.items():
-        for inst_name in comp_data[1:]:
-            inst = intf.kh_comp_inst[inst_name]
-            print >> vfile, "\n%s : %s \nport map (" % (inst_name, comp_name)
-            pmap = []
-            strargs = inspect.getargspec(inst.func).args
-            for sname, sig in inst.sigdict.items():
-                if sname in strargs:
-                    # fix invalid name if required
-                    if sname in _VHDL_Invalid_names:
-                        sname = "myhdl_" + sname
-                    pmap.append("    %s => %s" % (sname, sig._name))
-            print >> vfile, ",\n".join(pmap) + ");"
-        
-    print >> vfile, "\n"
+    _original_convertGens(genlist, siglist, memlist, vfile)
+    
+    if intf is not None:
+        # instantiations
+        for comp_name, comp_data in intf.kh_comp_decls.items():
+            for inst_name in comp_data[1:]:
+                inst = intf.kh_comp_inst[inst_name]
+                print >> vfile, "\n%s : %s \nport map (" % (inst_name, comp_name)
+                pmap = []
+                strargs = inspect.getargspec(inst.func).args
+                for sname, sig in inst.sigdict.items():
+                    if sname in strargs:
+                        # fix invalid name if required
+                        if sname in _VHDL_Reserved_words:
+                            sname = "myhdl_" + sname
+                        pmap.append("    %s => %s" % (sname, sig._name))
+                print >> vfile, ",\n".join(pmap) + ");"
+            
+        print >> vfile, "\n"
+
+def _monkey_convertor():
+    """
+    Monkey patch
+    
+    This replaces original _writeSigDecls and _convertGens 
+    to support kh conversion.
+    """
+    for k, v in sys.modules.items():
+        if k == "toVHDL_kh":
+            continue
+        elif "_writeSigDecls" in dir(v):
+            if v._writeSigDecls == _original_writeSigDecls:
+                print "Monkey change k %s v %s from %s to %s" % (k, v, v._writeSigDecls, _original_writeSigDecls)
+                setattr(v, "_writeSigDecls", _writeSigDecls)
+            if v._convertGens == _original_convertGens:
+                print "Monkey change k %s v %s from %s to %s" % (k, v, v._convertGens, _original_convertGens)
+                setattr(v, "_convertGens", _convertGens)
+    #print "MONKEY: patch done! test it"
+
+_monkey_convertor()
 
 # special comparison
 def _param_compare(x, y):
@@ -457,5 +389,19 @@ def _param_compare(x, y):
     # otherwise, equals
     return True
     
-# invalid names in VHDL
-_VHDL_Invalid_names = ("in", "out", "entity", "architecture", "generic", "port", "map", "end")
+# Reserved words in VHDL (IEEE 1076-2008)
+_VHDL_Reserved_words = ("abs", "access", "after", "alias", "all", "and", 
+"architecture", "array", "assert", "assume", "assume_guarantee", "attribute", 
+"begin", "block", "body", "buffer", "bus", "case", "component", "configuration", 
+"constant", "context", "cover", "default", "disconnect", "downto", "else", 
+"elsif", "end", "entity", "exit", "fairness", "file", "for", "force", "function", 
+"generate", "generic", "group", "guarded", "if", "impure", "in", "inertial", 
+"inout", "is", "label", "library", "linkage", "literal", "loop", "map", "mod", 
+"nand", "new", "next", "nor", "not", "null", "of", "on", "open", "or", "others", 
+"out", "package", "parameter", "port", "postponed", "procedure", "process", 
+"property", "protected", "pure", "range", "record", "register", "reject", 
+"release", "rem", "report", "restrict", "restrict_guarantee", "return", "rol", 
+"ror", "select", "sequence", "severity", "signal", "shared", "sla", "sll", 
+"sra", "srl", "strong", "subtype", "then", "to", "transport", "type", 
+"unaffected", "units", "until", "use", "variable", "vmode", "vprop", "vunit", 
+"wait", "when", "while", "with", "xnor", "xor")
