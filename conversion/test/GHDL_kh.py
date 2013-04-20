@@ -23,18 +23,18 @@ if __name__ == "__main__":
         #print "DEBUG: Extra analyze for %s" % sys.argv[1]
         files = glob.glob("*.vhd")
         files.sort(cmp=lambda x, y : cmp(os.stat(x).st_mtime, os.stat(y).st_mtime))
-        pck = False
+        pck = []
+        # Analyze packages first
         for f in files:
-            if f.startswith("pck_myhdl_"):
-                pck = f
-                #print "Analyze %s" % pck
-                retval = subprocess.call("ghdl -a --workdir=work %s" % pck, shell=True)
+            if f.startswith("pck_"):
+                pck.append(f)
+                #print "Analyze %s" % f
+                retval = subprocess.call("ghdl -a --workdir=work %s" % f, shell=True)
                 if retval != 0:
-                    print "GHDL Analyze error (%s)." % pck
+                    print "GHDL Analyze error (%s)." % f
                     sys.exit(retval)
-                break
-        if pck:
-            files.remove(pck)
+        for f in pck:
+            files.remove(f)
         for f in files:
             if f == "%s.vhd" % sys.argv[1]:
                 continue

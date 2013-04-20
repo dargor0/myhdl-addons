@@ -405,5 +405,5 @@ def test_multiple_components_v():
                "reg_width_1", "reg_width_2", "reg_width_3", "compare_0", 
                "compare_1", "compare_2"]
     assert len(u) == len(f_check)
-    for m in ():
+    for m in f_check:
         assert file_check(u, m)
