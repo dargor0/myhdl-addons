@@ -32,12 +32,15 @@ import myhdl
 from myhdl import *
 from myhdl.conversion._misc import _genUniqueSuffix
 from myhdl.conversion._analyze import (_enumTypeSet, _constDict, _AnalyzeTopFuncVisitor)
-from myhdl.conversion._toVHDL import (toVHDL, _ToVHDLConvertor)
+from myhdl.conversion._toVHDL import (toVHDL, _ToVHDLConvertor, _enumPortTypeSet, 
+                                      _writeFileHeader, _shortversion)
 from myhdl._extractHierarchy import (_HierExtr, _memInfoMap, _UserCode)
 from myhdl._Signal import _Signal
 
 from myhdl.conversion._toVHDL import _writeSigDecls as _original_writeSigDecls
 from myhdl.conversion._toVHDL import _convertGens as _original_convertGens
+from myhdl.conversion._toVHDL import _writeCustomPackage as _original_writeCustomPackage
+from myhdl.conversion._toVHDL import _writeModuleHeader as _original_writeModuleHeader
 
 from open_interceptor import open_interceptor, current_interceptor
 
@@ -67,8 +70,6 @@ class _ToVHDL_kh_Convertor(_ToVHDLConvertor):
 
         if self.maxdepth == 0:
             # disabled kh
-            setattr(intf, "kh_discard_siglist", [])
-            setattr(intf, "kh_discard_memlist", [])
             setattr(intf, "kh_comp_inst", [])
             setattr(intf, "kh_comp_decls", {})
             genlist.insert(0, intf)
@@ -111,13 +112,14 @@ class _ToVHDL_kh_Convertor(_ToVHDLConvertor):
         # keep "genlist" with only direct generators
         del_genlist = []
         for tree in genlist:
-            # TODO: user code not supported for hierarchical conversion (yet)
             if isinstance(tree, _UserCode):
-                warnings.warn("User-defined code is not supported for keep-hierarchy mode.\n" 
-                              "  Fallback to standard conversion.\n" 
-                              '  In file "%s" line %d, in %s' % 
-                              (tree.sourcefile, tree.sourceline, tree.funcname), 
-                              category=ToVHDLWarning)
+                # user-defined code: can only be used from a structural 
+                # definition. 
+                
+                # special case: top-function using user-defined code
+                # pass as direct implementation
+                if h.hierarchy[0].func.func_name != tree.funcname:
+                    del_genlist.append(tree)
             else:
                 for f in tree.body:
                     if f.name not in direct_impl.keys():
@@ -251,6 +253,10 @@ class _ToVHDL_kh_Convertor(_ToVHDLConvertor):
                 state_enumTypeSet = _enumTypeSet.copy()
                 state_constDict = _constDict.copy()
                 
+                # support for enum types in entity ports
+                state_enumPortTypeSet = _enumPortTypeSet.copy()
+                _enumPortTypeSet.clear()
+                
                 # use open_interceptor to store results on StringIO's
                 i_files = open_interceptor(("vhd", "vhdl"))
                 with i_files.get_interceptor():
@@ -262,6 +268,21 @@ class _ToVHDL_kh_Convertor(_ToVHDLConvertor):
                 _memInfoMap.update(state_memInfoMap)
                 _constDict.clear()
                 _constDict.update(state_constDict)
+                
+                if len(_enumPortTypeSet) > 0:
+                    # replace local or port TypeSet with a use statement
+                    # NOTE: this is a ugly way to put new use statement from this point.
+                    pck_use = "use %(lib)s.pck_myhdl_%(ver)s.all;\nuse %(lib)s.pck_%(name)s.all;" % \
+                                {"lib": self.library, "ver": _shortversion, "name": comp_name}
+                    if hasattr(intf, "kh_useClauses"):
+                        intf.kh_useClauses += pck_use
+                    else:
+                        setattr(intf, "kh_useClauses", pck_use)
+                    for e in _enumPortTypeSet:
+                        if e in _enumTypeSet:
+                            _enumTypeSet.remove(e)
+                _enumPortTypeSet.clear()
+                _enumPortTypeSet.update(state_enumPortTypeSet)
                 
                 for fname, value in i_files.replaced_files.iteritems():
                     if fname in files:
@@ -295,8 +316,6 @@ class _ToVHDL_kh_Convertor(_ToVHDLConvertor):
                         
         # KH transformations done. Save additional data in intf object
         # this will be used on _writeSigDecls and _convertGens
-        setattr(intf, "kh_discard_siglist", discard_siglist)
-        setattr(intf, "kh_discard_memlist", discard_memlist)
         setattr(intf, "kh_comp_inst", comp_inst)
         setattr(intf, "kh_comp_decls", comp_decls)
         # _convertGens don't get intf as argument. Use genlist to pass
@@ -346,24 +365,58 @@ def _convertGens(genlist, siglist, memlist, vfile):
                 print >> vfile, ",\n".join(pmap) + ");"
             
         print >> vfile, "\n"
+        
+def _writeCustomPackage(f, intf):
+    # Enumeration support: in KH mode, type related to an entity
+    # should go to a separate file.
+    if hasattr(intf, "kh_comp_decls"):
+        vpath = "pck_" + intf.name + ".vhd"
+        print "DEBUG KH: writing %s for enumPortTypeSet %r" % (vpath, _enumPortTypeSet)
+        vfile = open(vpath, 'w')
+        _writeFileHeader(vfile, vpath)
+        _original_writeCustomPackage(vfile, intf)
+        vfile.close()
+    else:
+        _original_writeCustomPackage(f, intf)
+        
+def _writeModuleHeader(f, intf, needPck, lib, arch, useClauses, doc, numeric):
+    # Enumeration support: support for additional useClauses,
+    #   external package file
+    if hasattr(intf, "kh_useClauses"):
+        if useClauses is None:
+            mod_useClauses = intf.kh_useClauses
+        else:
+            mod_useClauses = useClauses + "\n" + intf.kh_useClauses
+        _original_writeModuleHeader(f, intf, needPck, lib, arch, mod_useClauses, doc, numeric)
+    else:
+        _original_writeModuleHeader(f, intf, needPck, lib, arch, useClauses, doc, numeric)
 
 def _monkey_convertor():
     """
     Monkey patch
     
-    This replaces original _writeSigDecls and _convertGens 
+    This replaces original _writeSigDecls, _convertGens and _writeCustomPackage
     to support kh conversion.
     """
     for k, v in sys.modules.items():
         if k == "toVHDL_kh":
             continue
-        elif "_writeSigDecls" in dir(v):
+        if "_writeSigDecls" in dir(v):
             if v._writeSigDecls == _original_writeSigDecls:
                 print "Monkey change k %s v %s from %s to %s" % (k, v, v._writeSigDecls, _original_writeSigDecls)
                 setattr(v, "_writeSigDecls", _writeSigDecls)
+        if "_convertGens" in dir(v):
             if v._convertGens == _original_convertGens:
                 print "Monkey change k %s v %s from %s to %s" % (k, v, v._convertGens, _original_convertGens)
                 setattr(v, "_convertGens", _convertGens)
+        if "_writeCustomPackage" in dir(v):
+            if v._writeCustomPackage == _original_writeCustomPackage:
+                print "Monkey change k %s v %s from %s to %s" % (k, v, v._writeCustomPackage, _original_writeCustomPackage)
+                setattr(v, "_writeCustomPackage", _writeCustomPackage)
+        if "_writeModuleHeader" in dir(v):
+            if v._writeModuleHeader == _original_writeModuleHeader:
+                print "Monkey change k %s v %s from %s to %s" % (k, v, v._writeModuleHeader, _original_writeModuleHeader)
+                setattr(v, "_writeModuleHeader", _writeModuleHeader)
     #print "MONKEY: patch done! test it"
 
 _monkey_convertor()
