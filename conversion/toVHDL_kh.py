@@ -134,6 +134,15 @@ class _ToVHDL_kh_Convertor(_ToVHDLConvertor):
         for sname, sig in h.hierarchy[0].sigdict.iteritems():
             if sname not in intf.argnames:
                 internals.append(sig._name)
+                # unused internal signals: change to used read
+                if not sig._used:
+                    #print "DEBUG KH: signal %r is unused. Change to used read" % sig
+                    sig._used = True
+                    sig._read = True
+        # TODO: infer correctly the list of internal signals: discard unused
+        # signals and top-level signals. Currently recovering unused signals in
+        # case they're needed in instance's port map (hint: check attributes of 
+        # signals passed to recursive toVHDL)
         
         # all signals in memdict as internals
         for mi in h.hierarchy[0].memdict.itervalues():
@@ -371,7 +380,6 @@ def _writeCustomPackage(f, intf):
     # should go to a separate file.
     if hasattr(intf, "kh_comp_decls"):
         vpath = "pck_" + intf.name + ".vhd"
-        print "DEBUG KH: writing %s for enumPortTypeSet %r" % (vpath, _enumPortTypeSet)
         vfile = open(vpath, 'w')
         _writeFileHeader(vfile, vpath)
         _original_writeCustomPackage(vfile, intf)
@@ -403,19 +411,19 @@ def _monkey_convertor():
             continue
         if "_writeSigDecls" in dir(v):
             if v._writeSigDecls == _original_writeSigDecls:
-                print "Monkey change k %s v %s from %s to %s" % (k, v, v._writeSigDecls, _original_writeSigDecls)
+                #print "Monkey change k %s v %s from %s to %s" % (k, v, v._writeSigDecls, _original_writeSigDecls)
                 setattr(v, "_writeSigDecls", _writeSigDecls)
         if "_convertGens" in dir(v):
             if v._convertGens == _original_convertGens:
-                print "Monkey change k %s v %s from %s to %s" % (k, v, v._convertGens, _original_convertGens)
+                #print "Monkey change k %s v %s from %s to %s" % (k, v, v._convertGens, _original_convertGens)
                 setattr(v, "_convertGens", _convertGens)
         if "_writeCustomPackage" in dir(v):
             if v._writeCustomPackage == _original_writeCustomPackage:
-                print "Monkey change k %s v %s from %s to %s" % (k, v, v._writeCustomPackage, _original_writeCustomPackage)
+                #print "Monkey change k %s v %s from %s to %s" % (k, v, v._writeCustomPackage, _original_writeCustomPackage)
                 setattr(v, "_writeCustomPackage", _writeCustomPackage)
         if "_writeModuleHeader" in dir(v):
             if v._writeModuleHeader == _original_writeModuleHeader:
-                print "Monkey change k %s v %s from %s to %s" % (k, v, v._writeModuleHeader, _original_writeModuleHeader)
+                #print "Monkey change k %s v %s from %s to %s" % (k, v, v._writeModuleHeader, _original_writeModuleHeader)
                 setattr(v, "_writeModuleHeader", _writeModuleHeader)
     #print "MONKEY: patch done! test it"
 
