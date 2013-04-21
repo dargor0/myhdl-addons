@@ -5,7 +5,7 @@ Change Makefile variable MYHDL_BASEDIR to your local source directory.
 
 Requirements:
   * MyHDL source 
-  * GHDL
+  * GHDL or vcom (Modelsim)
   * py.test
 
 
