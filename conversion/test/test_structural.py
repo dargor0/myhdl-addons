@@ -45,6 +45,7 @@ def structural_adder(a, b, s, cin, cout, width=8):
     carry_list = [cin] + [Signal(False) for x in range(width-1)] + [cout]
     sout_list = [Signal(False) for x in range(width)]
     sout = ConcatSignal(*sout_list)
+    sout_list.reverse()
     for i in range(width):
         adder.append(onebit_full_adder(a(i), b(i), sout_list[i], carry_list[i], carry_list[i+1]))
     @always_comb
