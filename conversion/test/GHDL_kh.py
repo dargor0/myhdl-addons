@@ -28,7 +28,7 @@ if __name__ == "__main__":
         for f in files:
             if f.startswith("pck_"):
                 pck.append(f)
-                #print "Analyze %s" % f
+                #print "Pck Analyze %s" % f
                 retval = subprocess.call("ghdl -a --workdir=work %s" % f, shell=True)
                 if retval != 0:
                     print "GHDL Analyze error (%s)." % f
@@ -38,11 +38,13 @@ if __name__ == "__main__":
         for f in files:
             if f == "%s.vhd" % sys.argv[1]:
                 continue
+            if os.stat(f).st_size == 0:
+                continue
             if os.path.isfile("work/" + f.replace(".vhd", ".o")):
                 if os.stat(f).st_mtime < os.stat("work/" + f.replace(".vhd", ".o")).st_mtime:
                     #print "File up to date %s" % f
                     continue
-            #print "Analyze %s" % f
+            #print "Sub Analyze %s" % f
             retval = subprocess.call("ghdl -a --workdir=work %s" % f, shell=True)
             #if retval != 0:
             #    print "GHDL Analyze error (ignore)."
