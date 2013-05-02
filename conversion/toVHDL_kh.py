@@ -34,15 +34,12 @@ from myhdl.conversion._misc import _genUniqueSuffix
 from myhdl.conversion._analyze import (_enumTypeSet, _constDict, _AnalyzeTopFuncVisitor)
 from myhdl.conversion._toVHDL import (toVHDL, _ToVHDLConvertor, _enumPortTypeSet, 
                                       _writeFileHeader, _shortversion)
-from myhdl._extractHierarchy import (_HierExtr, _memInfoMap, _UserCode)
+from myhdl._extractHierarchy import (_memInfoMap, _UserCode)
 from myhdl._Signal import _Signal
 
-from myhdl.conversion._toVHDL import _writeSigDecls as _original_writeSigDecls
 from myhdl.conversion._toVHDL import _convertGens as _original_convertGens
 from myhdl.conversion._toVHDL import _writeCustomPackage as _original_writeCustomPackage
 from myhdl.conversion._toVHDL import _writeModuleHeader as _original_writeModuleHeader
-
-from open_interceptor import open_interceptor, current_interceptor
 
 # main object
 class _ToVHDL_kh_Convertor(_ToVHDLConvertor):
@@ -136,7 +133,6 @@ class _ToVHDL_kh_Convertor(_ToVHDLConvertor):
                 internals.append(sig._name)
                 # unused internal signals: change to used read
                 if not sig._used:
-                    #print "DEBUG KH: signal %r is unused. Change to used read" % sig
                     sig._used = True
                     sig._read = True
         # TODO: infer correctly the list of internal signals: discard unused
@@ -206,6 +202,8 @@ class _ToVHDL_kh_Convertor(_ToVHDLConvertor):
                     
         files = {}
         comp_decls = {}
+        # NOTE: this is a ugly way to put new use statements. Look for a better way
+        use_clauses = ["use %s.pck_myhdl_%s.all;" % (self.library, _shortversion)]
         for func_name, instdata in comp_dict.iteritems():
             for cidx, cdata in enumerate(instdata):
                 inst_name = cdata[0][0]
@@ -220,113 +218,80 @@ class _ToVHDL_kh_Convertor(_ToVHDLConvertor):
                 if len(instdata) > 1:
                     # multiple component for a single function
                     comp_name = "%s_%d" % (comp_name, cidx)
+                    
+                comp_decls[comp_name] = cdata[0]
+                use_clauses.append("use %s.%s;" % (self.library, comp_name))
                 
-                # copy list of non-Signal arguments 
-                func_args = {}
-                strargs = inspect.getargspec(inst.func).args
-                for k, v in inst.sigdict.items():
-                    if k in strargs:
-                        func_args[k] = _Signal(v._val)
-                for k, v in argdict.items():
-                    if (k not in func_args) and (k in strargs):
-                        func_args[k] = v
+                if not self.no_component_files:
+                    # copy list of non-Signal arguments 
+                    func_args = {}
+                    strargs = inspect.getargspec(inst.func).args
+                    for k, v in inst.sigdict.items():
+                        if k in strargs:
+                            func_args[k] = _Signal(v._val)
+                    for k, v in argdict.items():
+                        if (k not in func_args) and (k in strargs):
+                            func_args[k] = v
+                    
+                    # check for 'self' in argdict
+                    if "self" in func_args:
+                        warnings.warn("Detected 'self' argument: %s. Removed before recursive calling." 
+                                      % repr(func_args["self"]), category=ToVHDLWarning)
+                        del func_args["self"]
+                    
+                    if self.maxdepth == 1 :
+                        # standard convertor
+                        convertor = toVHDL
+                    else:
+                        # recursive convertor: create a new one
+                        convertor = _ToVHDL_kh_Convertor()
+                        convertor.maxdepth = self.maxdepth
+                        convertor.no_component_files = self.no_component_files
+                        if self.maxdepth is not None:
+                            convertor.maxdepth -= 1
+                            
+                    # copy some attributes
+                    for attr in _ToVHDLConvertor.__slots__:
+                        if attr not in ("name", "component_declarations", "no_myhdl_package"):
+                            setattr(convertor, attr, getattr(self, attr))
+                    convertor.no_myhdl_package = True
+                    convertor.name = comp_name
+                    
+                    # NOTE: toVHDL is non-reentrant function
+                    # save some states prior to call
+                    state_memInfoMap = _memInfoMap.copy()
+                    state_genUniqueSuffix = _genUniqueSuffix.i
+                    state_enumTypeSet = _enumTypeSet.copy()
+                    state_constDict = _constDict.copy()
+                    
+                    # support for enum types in entity ports
+                    state_enumPortTypeSet = _enumPortTypeSet.copy()
+                    _enumPortTypeSet.clear()
                 
-                # check for 'self' in argdict
-                if "self" in func_args:
-                    warnings.warn("Detected 'self' argument: %s. Removed before recursive calling." 
-                                  % repr(func_args["self"]), category=ToVHDLWarning)
-                    del func_args["self"]
-                
-                if self.maxdepth == 1 :
-                    # standard convertor
-                    convertor = toVHDL
-                else:
-                    # recursive convertor: create a new one
-                    convertor = _ToVHDL_kh_Convertor()
-                    convertor.maxdepth = self.maxdepth
-                    convertor.no_component_files = self.no_component_files
-                    if self.maxdepth is not None:
-                        convertor.maxdepth -= 1
-                        
-                # copy some attributes
-                for attr in _ToVHDLConvertor.__slots__:
-                    if attr not in ("name", "component_declarations", "no_myhdl_package"):
-                        setattr(convertor, attr, getattr(self, attr))
-                convertor.no_myhdl_package = True
-                convertor.name = comp_name
-                
-                # NOTE: toVHDL is non-reentrant function
-                # save some states prior to call
-                state_memInfoMap = _memInfoMap.copy()
-                state_genUniqueSuffix = _genUniqueSuffix.i
-                state_enumTypeSet = _enumTypeSet.copy()
-                state_constDict = _constDict.copy()
-                
-                # support for enum types in entity ports
-                state_enumPortTypeSet = _enumPortTypeSet.copy()
-                _enumPortTypeSet.clear()
-                
-                # use open_interceptor to store results on StringIO's
-                i_files = open_interceptor(("vhd", "vhdl"))
-                with i_files.get_interceptor():
+                    # recursive call
                     convertor(inst.func, **func_args)
                 
-                _genUniqueSuffix.i = state_genUniqueSuffix
-                _enumTypeSet.update(state_enumTypeSet)
-                _memInfoMap.clear()
-                _memInfoMap.update(state_memInfoMap)
-                _constDict.clear()
-                _constDict.update(state_constDict)
+                    _genUniqueSuffix.i = state_genUniqueSuffix
+                    _enumTypeSet.update(state_enumTypeSet)
+                    _memInfoMap.clear()
+                    _memInfoMap.update(state_memInfoMap)
+                    _constDict.clear()
+                    _constDict.update(state_constDict)
                 
-                if len(_enumPortTypeSet) > 0:
-                    # replace local or port TypeSet with a use statement
-                    # NOTE: this is a ugly way to put new use statement from this point.
-                    pck_use = "use %(lib)s.pck_myhdl_%(ver)s.all;\nuse %(lib)s.pck_%(name)s.all;" % \
-                                {"lib": self.library, "ver": _shortversion, "name": comp_name}
-                    if hasattr(intf, "kh_useClauses"):
-                        intf.kh_useClauses += pck_use
-                    else:
-                        setattr(intf, "kh_useClauses", pck_use)
-                    for e in _enumPortTypeSet:
-                        if e in _enumTypeSet:
-                            _enumTypeSet.remove(e)
-                _enumPortTypeSet.clear()
-                _enumPortTypeSet.update(state_enumPortTypeSet)
+                    if len(_enumPortTypeSet) > 0:
+                        # replace local or port TypeSet with a use statement
+                        use_clauses.append("use %s.pck_%s.all;" % (self.library, comp_name))
+                        for e in _enumPortTypeSet:
+                            if e in _enumTypeSet:
+                                _enumTypeSet.remove(e)
+                    _enumPortTypeSet.clear()
+                    _enumPortTypeSet.update(state_enumPortTypeSet)
                 
-                for fname, value in i_files.replaced_files.iteritems():
-                    if fname in files:
-                        warnings.warn("File %s already generated for component %s." % 
-                                      (fname, comp_name), category=ToVHDLWarning)
-                        continue
-                    files[fname] = value
-                    content = value.getvalue()
-                    # extract comp_decls
-                    if fname.startswith(comp_name + ".vhd"):
-                        startidx = re.search(r"entity.*is", content, re.IGNORECASE).regs[0][0]
-                        endidx = re.search(r"end entity.*;", content, re.IGNORECASE).regs[0][1]
-                        # comp_decls is [<component_name>]: [<code>, <instance_name>...]
-                        comp_decls[comp_name] = [re.sub("entity", "component", 
-                                                        content[startidx:endidx], re.IGNORECASE)]
-                        comp_decls[comp_name].extend(cdata[0])
-
-        if len(files) > 0:
-            if self.no_component_files:
-                ic_ref = current_interceptor()
-                if ic_ref:
-                    ic_ref.replaced_files.update(files)
-                else:
-                    warnings.warn("No open-interceptor detected. Components %s will not be saved." % 
-                                  repr(comp_decls.keys()), category=ToVHDLWarning)
-            else:
-                # save files to disk
-                for fname, value in files.iteritems():
-                    with open(fname, "w") as f:
-                        f.write(value.getvalue())
-                        
         # KH transformations done. Save additional data in intf object
         # this will be used on _writeSigDecls and _convertGens
         setattr(intf, "kh_comp_inst", comp_inst)
         setattr(intf, "kh_comp_decls", comp_decls)
+        setattr(intf, "kh_use_clauses", use_clauses)
         # _convertGens don't get intf as argument. Use genlist to pass
         # intf to _convertGens
         genlist.insert(0, intf)
@@ -340,15 +305,6 @@ toVHDL_kh = _ToVHDL_kh_Convertor()
 
 # override converter functions
 
-def _writeSigDecls(f, intf, siglist, memlist):
-    if hasattr(intf, "kh_comp_decls"):
-        # component declaration
-        for c in intf.kh_comp_decls.values():
-            print >> f, c[0]
-            print >> f
-    
-    _original_writeSigDecls(f, intf, siglist, memlist)
-    
 def _convertGens(genlist, siglist, memlist, vfile):
     if isinstance(genlist[0],  _AnalyzeTopFuncVisitor):
         intf = genlist.pop(0)
@@ -360,9 +316,9 @@ def _convertGens(genlist, siglist, memlist, vfile):
     if intf is not None:
         # instantiations
         for comp_name, comp_data in intf.kh_comp_decls.items():
-            for inst_name in comp_data[1:]:
+            for inst_name in comp_data:
                 inst = intf.kh_comp_inst[inst_name]
-                print >> vfile, "\n%s : %s \nport map (" % (inst_name, comp_name)
+                print >> vfile, "\n%s : entity %s \nport map (" % (inst_name, comp_name)
                 pmap = []
                 strargs = inspect.getargspec(inst.func).args
                 for sname, sig in inst.sigdict.items():
@@ -388,13 +344,13 @@ def _writeCustomPackage(f, intf):
         _original_writeCustomPackage(f, intf)
         
 def _writeModuleHeader(f, intf, needPck, lib, arch, useClauses, doc, numeric):
-    # Enumeration support: support for additional useClauses,
-    #   external package file
-    if hasattr(intf, "kh_useClauses"):
+    # Additional packages: support for additional useClauses,
+    #   components in local library, external package file
+    if hasattr(intf, "kh_use_clauses"):
         if useClauses is None:
-            mod_useClauses = intf.kh_useClauses
+            mod_useClauses = "\n".join(intf.kh_use_clauses)
         else:
-            mod_useClauses = useClauses + "\n" + intf.kh_useClauses
+            mod_useClauses = useClauses + "\n" + "\n".join(intf.kh_use_clauses)
         _original_writeModuleHeader(f, intf, needPck, lib, arch, mod_useClauses, doc, numeric)
     else:
         _original_writeModuleHeader(f, intf, needPck, lib, arch, useClauses, doc, numeric)
@@ -409,10 +365,6 @@ def _monkey_convertor():
     for k, v in sys.modules.items():
         if k == "toVHDL_kh":
             continue
-        if "_writeSigDecls" in dir(v):
-            if v._writeSigDecls == _original_writeSigDecls:
-                #print "Monkey change k %s v %s from %s to %s" % (k, v, v._writeSigDecls, _original_writeSigDecls)
-                setattr(v, "_writeSigDecls", _writeSigDecls)
         if "_convertGens" in dir(v):
             if v._convertGens == _original_convertGens:
                 #print "Monkey change k %s v %s from %s to %s" % (k, v, v._convertGens, _original_convertGens)
