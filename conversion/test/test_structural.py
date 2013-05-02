@@ -352,8 +352,8 @@ def test_disable_components():
         return
     f = get_fileinfo()
     kh_convertor.no_component_files = True
-    # analyze only: missing components required for simulation
-    assert analyze(adder_bench, structural_adder) == 0
+    # analyze only and ignore error: missing components required for simulation
+    analyze(adder_bench, structural_adder)
     u = updated_files(f)
     assert len(u) == 1
     assert not file_check(u, "structural_adder")
