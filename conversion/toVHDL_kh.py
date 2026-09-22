@@ -228,7 +228,10 @@ class _ToVHDL_kh_Convertor(_ToVHDLConvertor):
                     strargs = inspect.getargspec(inst.func).args
                     for k, v in inst.sigdict.items():
                         if k in strargs:
-                            func_args[k] = _Signal(v._val)
+                            if isinstance(v, ResetSignal):
+                                func_args[k] = ResetSignal(v._val, v.active, v.async)
+                            else:
+                                func_args[k] = _Signal(v._val)
                     for k, v in argdict.items():
                         if (k not in func_args) and (k in strargs):
                             func_args[k] = v
