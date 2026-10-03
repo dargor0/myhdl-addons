@@ -7,8 +7,7 @@ helpers, :class:`SignalView`) comes from :mod:`myhdl_addons.common`.
 
 Most components expose their ports through a :class:`SignalView`
 (``IC-FR-145``) and their effective configuration through ``as_dict()``
-(``IC-FR-122``); the structural :func:`output_stage` block drives signal
-bundles directly (see its module docstring).
+(``IC-FR-122``).
 """
 
 from ..common.config import ComponentBase
@@ -20,34 +19,29 @@ from .alu import (
     Alu,
 )
 from .comparator import AVAIL_OUTPUTS, Comparator
-from .counter import Counter, CounterPorts
+from .counter import Counter
 from .encoder import (
     PRIORITIES,
     Decoder,
-    DecoderPorts,
     PriorityEncoder,
-    PriorityEncoderPorts,
 )
 from .fifo import (
     INTERFACES,
     STREAM,
     WR_RD,
     Fifo,
-    FifoPorts,
 )
-from .incrementer import WRAP_MODES, Incrementer, IncrementerPorts
-from .memory import SyncRam, SyncRamPorts, SyncRom, SyncRomPorts
-from .mux import Mux, MuxPorts, OneHotMux, OneHotMuxPorts
-from .output_stage import output_stage
+from .incrementer import WRAP_MODES, Incrementer
+from .memory import SyncRam, SyncRom
+from .mux import Mux, OneHotMux
 from .regfile import (
     NO_CHANGE,
     READ_FIRST,
     WRITE_FIRST,
     WRITE_MODES,
     RegisterFile,
-    RegisterFilePorts,
 )
-from .register import Register, RegisterPorts
+from .register import Register
 from .shifter import (
     MODE_NAMES,
     MODES,
@@ -58,7 +52,6 @@ from .shifter import (
     SRL,
     STRUCTURES,
     BarrelShifter,
-    BarrelShifterPorts,
 )
 
 __all__ = [
@@ -85,34 +78,21 @@ __all__ = [
     "WR_RD",
     "Alu",
     "BarrelShifter",
-    "BarrelShifterPorts",
     "Comparator",
     "ComponentBase",
     "Counter",
-    "CounterPorts",
     "Decoder",
-    "DecoderPorts",
     "Fifo",
-    "FifoPorts",
     "HdlConfigError",
     "HdlError",
     "Incrementer",
-    "IncrementerPorts",
     "Mux",
-    "MuxPorts",
     "OneHotMux",
-    "OneHotMuxPorts",
     "PriorityEncoder",
-    "PriorityEncoderPorts",
     "Register",
     "RegisterFile",
-    "RegisterFilePorts",
-    "RegisterPorts",
     "SignalView",
     "SyncRam",
-    "SyncRamPorts",
     "SyncRom",
-    "SyncRomPorts",
     "connect",
-    "output_stage",
 ]

@@ -69,3 +69,14 @@ def test_registered_reset_capture_and_enable():
     results = []
     _reg_tb(results).run_sim()
     assert results == [(0, 0), (0, 0), (1, 0), (1, 0)]
+
+
+def test_configuration_matrix():
+    component = Comparator(
+        width=8,
+        outputs=("eq", "ne", "lt", "ltu", "gt", "gtu", "ge", "le"),
+        signed=False,
+        registered=1,
+        en=True,
+    )
+    assert component.hdl(component.ports()) is not None
