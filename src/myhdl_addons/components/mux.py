@@ -23,9 +23,7 @@ from ..common.views import SignalView
 __all__ = ["Mux", "OneHotMux"]
 
 
-def _common_params(
-    width, n, valid, registered, en, reset_value, reset_signal
-) -> dict:
+def _common_params(width, n, valid, registered, en, reset_value, reset_signal) -> dict:
     """Validate and return the configuration shared by the two muxes."""
     p_width = int(check_positive(width, "width"))
     return {
@@ -34,11 +32,8 @@ def _common_params(
         "valid": bool(check_bool(valid, "valid")),
         "registered": bool(registered),
         "en": bool(en),
-        "reset_value": check_non_negative(reset_value, "reset_value")
-        & mask(p_width),
-        "reset_signal": reset_signal
-        if isinstance(reset_signal, ResetSignal)
-        else None,
+        "reset_value": check_non_negative(reset_value, "reset_value") & mask(p_width),
+        "reset_signal": reset_signal if isinstance(reset_signal, ResetSignal) else None,
     }
 
 
@@ -124,10 +119,9 @@ class Mux(ComponentBase):
         self._params = _common_params(
             width, n, valid, registered, en, reset_value, reset_signal
         )
-        self._params["default_value"] = (
-            check_non_negative(default_value, "default_value")
-            & mask(self._params["width"])
-        )
+        self._params["default_value"] = check_non_negative(
+            default_value, "default_value"
+        ) & mask(self._params["width"])
 
     @property
     def sel_bits(self) -> int:

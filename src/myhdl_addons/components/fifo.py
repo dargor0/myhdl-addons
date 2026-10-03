@@ -20,7 +20,6 @@ from ..common.config import (
     check_choice,
     check_non_negative,
     check_positive,
-    mask,
 )
 from ..common.views import SignalView
 
@@ -94,7 +93,17 @@ def fifo_pre(fall_through, empty, head, rdata_reg, rvalid_reg, pre_data, pre_val
 
 @block
 def fifo_ctrl(
-    stream, full, empty, pre_valid, wr_en, rd_en, valid_in, ready_out, do_wr, do_rd, ready_in
+    stream,
+    full,
+    empty,
+    pre_valid,
+    wr_en,
+    rd_en,
+    valid_in,
+    ready_out,
+    do_wr,
+    do_rd,
+    ready_in,
 ):
     """Handshake control: derive ``do_wr``/``do_rd`` and (stream) ``ready_in``."""
 
@@ -132,7 +141,9 @@ def fifo_ctrl(
 
 
 @block
-def fifo_seq(mem, clk, reset_sig, do_wr, do_rd, wptr, rptr, used, full, empty, wdata, depth):
+def fifo_seq(
+    mem, clk, reset_sig, do_wr, do_rd, wptr, rptr, used, full, empty, wdata, depth
+):
     """Pointer/occupancy/flags update plus the memory write."""
 
     @always(clk.posedge)
@@ -168,7 +179,9 @@ def fifo_seq(mem, clk, reset_sig, do_wr, do_rd, wptr, rptr, used, full, empty, w
 
 
 @block
-def fifo_rdreg(clk, reset_sig, head, do_rd, rdata_reg, rvalid_reg, fall_through, stream):
+def fifo_rdreg(
+    clk, reset_sig, head, do_rd, rdata_reg, rvalid_reg, fall_through, stream
+):
     """Read-data (and stream valid) register."""
 
     if fall_through:
@@ -275,57 +288,31 @@ class Fifo(ComponentBase):
             "almost_empty": check_non_negative(almost_empty, "almost_empty"),
             "count": check_bool(count, "count"),
             "flush": check_bool(flush, "flush"),
-            "registered_outputs": check_bool(
-                registered_outputs, "registered_outputs"
-            ),
+            "registered_outputs": check_bool(registered_outputs, "registered_outputs"),
             "addr_bits": max(1, ceil_log2(p_depth)),
         }
-
-    @property
-    def width(self) -> int:
-        """Word width."""
-        return self._params["width"]
-
-    @property
-    def depth(self) -> int:
-        """Depth (entries)."""
-        return self._params["depth"]
-
-    @property
-    def interface(self) -> str:
-        """Interface name (``wr_rd``/``stream``)."""
-        return self._params["interface"]
 
     @property
     def stream(self) -> bool:
         """Whether this FIFO uses the ``stream`` interface."""
         return self._params["interface"] == STREAM
 
-    @property
-    def fall_through(self) -> bool:
-        """Whether first-word-fall-through is enabled."""
-        return self._params["fall_through"]
-
-    @property
-    def registered_outputs(self) -> bool:
-        """Whether an output register stage is present."""
-        return self._params["registered_outputs"]
-
     def ports(self) -> SignalView:
         """Allocate and return the component interface."""
+        width = self._params["width"]
         sig = {"clk": Signal(bool(0)), "resetn": Signal(bool(0))}
         if self.stream:
             sig["valid_in"] = Signal(bool(0))
             sig["ready_in"] = Signal(bool(0))
-            sig["data_in"] = Signal(intbv(0)[self.width :])
+            sig["data_in"] = Signal(intbv(0)[width:])
             sig["valid_out"] = Signal(bool(0))
             sig["ready_out"] = Signal(bool(0))
-            sig["data_out"] = Signal(intbv(0)[self.width :])
+            sig["data_out"] = Signal(intbv(0)[width:])
         else:
             sig["wr_en"] = Signal(bool(0))
-            sig["wdata"] = Signal(intbv(0)[self.width :])
+            sig["wdata"] = Signal(intbv(0)[width:])
             sig["rd_en"] = Signal(bool(0))
-            sig["rdata"] = Signal(intbv(0)[self.width :])
+            sig["rdata"] = Signal(intbv(0)[width:])
             sig["full"] = Signal(bool(0))
             sig["empty"] = Signal(bool(1))
         if self._params["almost_full"]:
@@ -333,7 +320,7 @@ class Fifo(ComponentBase):
         if self._params["almost_empty"]:
             sig["almost_empty"] = Signal(bool(0))
         if self._params["count"]:
-            sig["count"] = Signal(intbv(0, min=0, max=self.depth + 1))
+            sig["count"] = Signal(intbv(0, min=0, max=self._params["depth"] + 1))
         if self._params["flush"]:
             sig["flush"] = Signal(bool(0))
         return SignalView(**sig)
@@ -341,14 +328,15 @@ class Fifo(ComponentBase):
     @block
     def hdl(self, ports: SignalView):
         """Elaborate the FIFO onto *ports* and return its instances."""
-        width = self.width
-        depth = self.depth
-        stream = self.stream
-        fall_through = self.fall_through
-        registered_outputs = self.registered_outputs
-        has_flush = self._params["flush"]
-        almost_full = self._params["almost_full"]
-        almost_empty = self._params["almost_empty"]
+        params = self._params
+        width = params["width"]
+        depth = params["depth"]
+        stream = params["interface"] == STREAM
+        fall_through = params["fall_through"]
+        registered_outputs = params["registered_outputs"]
+        has_flush = params["flush"]
+        almost_full = params["almost_full"]
+        almost_empty = params["almost_empty"]
 
         proclist = []
         mem = [Signal(intbv(0)[width:]) for _ in range(depth)]
@@ -375,10 +363,22 @@ class Fifo(ComponentBase):
             ready_in = None
             wdata = ports.wdata
 
-        proclist.append(fifo_reset(ports.resetn, ports.flush if has_flush else None, reset_sig, has_flush))
+        proclist.append(
+            fifo_reset(
+                ports.resetn, ports.flush if has_flush else None, reset_sig, has_flush
+            )
+        )
         proclist.append(fifo_head(mem, rptr, head))
         proclist.append(
-            fifo_pre(fall_through, empty_sig, head, rdata_reg, rvalid_reg, pre_data, pre_valid)
+            fifo_pre(
+                fall_through,
+                empty_sig,
+                head,
+                rdata_reg,
+                rvalid_reg,
+                pre_data,
+                pre_valid,
+            )
         )
         proclist.append(
             fifo_ctrl(
@@ -428,7 +428,9 @@ class Fifo(ComponentBase):
             out_data = Signal(intbv(0)[width:])
             out_valid = Signal(bool(0))
             proclist.append(
-                fifo_outreg(ports.clk, reset_sig, pre_data, pre_valid, out_data, out_valid)
+                fifo_outreg(
+                    ports.clk, reset_sig, pre_data, pre_valid, out_data, out_valid
+                )
             )
             data_src = out_data
             valid_src = out_valid

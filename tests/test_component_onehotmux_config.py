@@ -68,7 +68,5 @@ def test_registered_reset_capture_and_enable():
 
 
 def test_configuration_matrix():
-    component = OneHotMux(
-        width=8, n=3, valid=True, strict=True, registered=1, en=True
-    )
+    component = OneHotMux(width=8, n=3, valid=True, strict=True, registered=1, en=True)
     assert component.hdl(component.ports()) is not None

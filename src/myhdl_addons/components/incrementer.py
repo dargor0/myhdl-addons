@@ -61,7 +61,6 @@ def derive_step(ps, py, pc, wrap_mode, sat_val, width, has_carry):
     """Split a step sum into ``y`` (wrap/saturate) and the carry/borrow flag."""
 
     if wrap_mode == "wrap":
-
         if has_carry:
 
             @always_comb
@@ -76,7 +75,6 @@ def derive_step(ps, py, pc, wrap_mode, sat_val, width, has_carry):
                 py.next = ps[width:]
 
     else:  # saturate
-
         if has_carry:
 
             @always_comb
@@ -246,21 +244,6 @@ class Incrementer(ComponentBase):
             if isinstance(reset_signal, ResetSignal)
             else None,
         }
-
-    @property
-    def width(self) -> int:
-        """Datapath width."""
-        return self._params["width"]
-
-    @property
-    def steps(self) -> tuple[int, ...]:
-        """Configured signed steps."""
-        return self._params["steps"]
-
-    @property
-    def wrap_mode(self) -> str:
-        """Wrap behaviour (``wrap``/``saturate``)."""
-        return self._params["wrap_mode"]
 
     @property
     def _has_step_sel(self) -> bool:

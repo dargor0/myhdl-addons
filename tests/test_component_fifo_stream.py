@@ -93,7 +93,7 @@ def test_skid_buffer_is_depth_two_stream():
     # A skid buffer is Fifo(depth=2, interface="stream"): it accepts and
     # forwards two beats under backpressure (checked in the handshake test).
     fifo = Fifo(width=8, depth=2, interface=STREAM)
-    assert fifo.depth == 2 and fifo.stream
+    assert fifo.as_dict()["depth"] == 2 and fifo.stream
     info = fifo.as_dict()
     assert info["interface"] == STREAM
     assert "Fifo" in repr(fifo)

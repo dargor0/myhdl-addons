@@ -95,9 +95,7 @@ class Decoder(ComponentBase):
         p_n = check_positive(n, "n")
         p_reset_value = check_non_negative(reset_value, "reset_value")
         p_reset_value &= mask(p_n)
-        p_reset_signal = (
-            reset_signal if isinstance(reset_signal, ResetSignal) else None
-        )
+        p_reset_signal = reset_signal if isinstance(reset_signal, ResetSignal) else None
         self._params = {
             "n": p_n,
             "en": check_bool(en, "en"),
@@ -199,9 +197,7 @@ class PriorityEncoder(ComponentBase):
         p_priority = check_choice(priority, PRIORITIES, "priority")
         p_reset_value = check_non_negative(reset_value, "reset_value")
         p_reset_value &= mask(max(1, ceil_log2(p_n)))
-        p_reset_signal = (
-            reset_signal if isinstance(reset_signal, ResetSignal) else None
-        )
+        p_reset_signal = reset_signal if isinstance(reset_signal, ResetSignal) else None
         self._params = {
             "n": p_n,
             "priority": p_priority,
@@ -253,10 +249,9 @@ class PriorityEncoder(ComponentBase):
                 idx = 0
                 seen = 0
                 for i in range(n):
-                    if ports.din[i]:
-                        if seen == 0:
-                            idx = i
-                            seen = 1
+                    if ports.din[i] and seen == 0:
+                        idx = i
+                        seen = 1
                 index_dst.next = idx
 
         else:

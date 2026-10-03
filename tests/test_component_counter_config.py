@@ -7,6 +7,8 @@ from myhdl_addons.components import Counter, HdlConfigError
 
 def test_config_errors_are_early():
     with pytest.raises(HdlConfigError):
+        Counter(min=-1)
+    with pytest.raises(HdlConfigError):
         Counter(min=5, max=3)
     with pytest.raises(HdlConfigError):
         Counter(width=4, reset_value=99)

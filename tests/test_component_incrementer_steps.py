@@ -29,7 +29,7 @@ def _inc_tb(
     )
     ports = inc.ports()
     dut = inc.hdl(ports)
-    has_sel = len(inc.steps) > 1
+    has_sel = len(inc.as_dict()["steps"]) > 1
     step_sel_sig = ports.signals.get("step_sel")
     load_sig = ports.signals.get("load")
     load_value_sig = ports.signals.get("load_value")

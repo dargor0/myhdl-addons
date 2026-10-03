@@ -19,8 +19,10 @@ def test_as_dict():
 
 
 def test_zero_reg_feature_optional():
-    assert RegisterFile(depth=4).zero_reg_fix_value is None
-    assert RegisterFile(depth=4, zero_reg_fix_value=0).zero_reg_fix_value == 0
+    assert RegisterFile(depth=4).as_dict()["zero_reg_fix_value"] is None
+    assert (
+        RegisterFile(depth=4, zero_reg_fix_value=0).as_dict()["zero_reg_fix_value"] == 0
+    )
 
 
 @block

@@ -73,9 +73,8 @@ def rf_bypass(base, dst, raddr, we, waddr, wvalue, nwrite):
     def p():
         dst.next = base
         for j in range(nwrite):
-            if we[j]:
-                if waddr[j] == raddr:
-                    dst.next = wvalue[j]
+            if we[j] and waddr[j] == raddr:
+                dst.next = wvalue[j]
 
     return p
 
@@ -88,9 +87,8 @@ def rf_blocked(raddr, we, waddr, blocked, nwrite):
     def p():
         hit = 0
         for j in range(nwrite):
-            if we[j]:
-                if waddr[j] == raddr:
-                    hit = 1
+            if we[j] and waddr[j] == raddr:
+                hit = 1
         blocked.next = hit != 0
 
     return p
@@ -101,7 +99,6 @@ def rf_capture(d, q, clk, resetn, reset_enable, hold, blocked):
     """Registered read capture: ``reset > hold-on-same-address-write > d``."""
 
     if reset_enable:
-
         if hold:
 
             @always(clk.posedge)
@@ -122,7 +119,6 @@ def rf_capture(d, q, clk, resetn, reset_enable, hold, blocked):
                     q.next = d
 
     else:
-
         if hold:
 
             @always(clk.posedge)
@@ -140,7 +136,9 @@ def rf_capture(d, q, clk, resetn, reset_enable, hold, blocked):
 
 
 @block
-def rf_wr_port(mem, clk, resetn, we, waddr, wvalue, depth, reset_enable, reset_value, zero_reg):
+def rf_wr_port(
+    mem, clk, resetn, we, waddr, wvalue, depth, reset_enable, reset_value, zero_reg
+):
     """Synchronous writes for one port, with optional reset and zero-register.
 
     One process per write port keeps every write port signal individually
@@ -149,7 +147,6 @@ def rf_wr_port(mem, clk, resetn, we, waddr, wvalue, depth, reset_enable, reset_v
     """
 
     if reset_enable:
-
         if zero_reg:
 
             @always(clk.posedge)
@@ -158,10 +155,8 @@ def rf_wr_port(mem, clk, resetn, we, waddr, wvalue, depth, reset_enable, reset_v
                     for i in range(depth):
                         mem[i].next = reset_value
                 else:
-                    if we:
-                        if waddr < depth:
-                            if waddr != 0:
-                                mem[waddr].next = wvalue
+                    if we and waddr < depth and waddr != 0:
+                        mem[waddr].next = wvalue
 
         else:
 
@@ -171,28 +166,23 @@ def rf_wr_port(mem, clk, resetn, we, waddr, wvalue, depth, reset_enable, reset_v
                     for i in range(depth):
                         mem[i].next = reset_value
                 else:
-                    if we:
-                        if waddr < depth:
-                            mem[waddr].next = wvalue
+                    if we and waddr < depth:
+                        mem[waddr].next = wvalue
 
     else:
-
         if zero_reg:
 
             @always(clk.posedge)
             def p():
-                if we:
-                    if waddr < depth:
-                        if waddr != 0:
-                            mem[waddr].next = wvalue
+                if we and waddr < depth and waddr != 0:
+                    mem[waddr].next = wvalue
 
         else:
 
             @always(clk.posedge)
             def p():
-                if we:
-                    if waddr < depth:
-                        mem[waddr].next = wvalue
+                if we and waddr < depth:
+                    mem[waddr].next = wvalue
 
     return p
 
@@ -295,80 +285,45 @@ class RegisterFile(ComponentBase):
             "addr_bits": max(1, ceil_log2(p_depth)),
         }
 
-    @property
-    def width(self) -> int:
-        """Word width."""
-        return self._params["width"]
-
-    @property
-    def depth(self) -> int:
-        """Number of entries."""
-        return self._params["depth"]
-
-    @property
-    def read_ports(self) -> int:
-        """Number of read ports."""
-        return self._params["read_ports"]
-
-    @property
-    def write_ports(self) -> int:
-        """Number of write ports."""
-        return self._params["write_ports"]
-
-    @property
-    def read_latency(self) -> int:
-        """Read latency (``0`` async / ``1`` registered)."""
-        return self._params["read_latency"]
-
-    @property
-    def write_mode(self) -> str:
-        """Same-address write behaviour."""
-        return self._params["write_mode"]
-
-    @property
-    def zero_reg_fix_value(self):
-        """Read-only constant for index 0, or ``None``."""
-        return self._params["zero_reg_fix_value"]
-
-    @property
-    def addr_bits(self) -> int:
-        """Address width."""
-        return self._params["addr_bits"]
-
     def _initial(self, index: int) -> int:
         init = self._params["init"]
         value = init[index] if init is not None else self._params["reset_value"]
-        return value & mask(self.width)
+        return value & mask(self._params["width"])
 
     def ports(self) -> SignalView:
         """Allocate and return the component interface."""
-        lanes = self.width // 8
+        width = self._params["width"]
+        addr_bits = self._params["addr_bits"]
+        write_ports = self._params["write_ports"]
+        read_ports = self._params["read_ports"]
+        lanes = width // 8
         sig = {"clk": Signal(bool(0)), "resetn": Signal(bool(0))}
-        for p in range(self.write_ports):
+        for p in range(write_ports):
             sig[f"we{p}"] = Signal(bool(0))
-            sig[f"waddr{p}"] = Signal(intbv(0, min=0, max=1 << self.addr_bits))
-            sig[f"wdata{p}"] = Signal(intbv(0)[self.width :])
+            sig[f"waddr{p}"] = Signal(intbv(0, min=0, max=1 << addr_bits))
+            sig[f"wdata{p}"] = Signal(intbv(0)[width:])
             if self._params["byte_write"]:
                 sig[f"wstrb{p}"] = Signal(intbv(0)[lanes:])
-        for p in range(self.read_ports):
-            sig[f"raddr{p}"] = Signal(intbv(0, min=0, max=1 << self.addr_bits))
-            sig[f"rdata{p}"] = Signal(intbv(0)[self.width :])
+        for p in range(read_ports):
+            sig[f"raddr{p}"] = Signal(intbv(0, min=0, max=1 << addr_bits))
+            sig[f"rdata{p}"] = Signal(intbv(0)[width:])
         return SignalView(**sig)
 
     @block
     def hdl(self, ports: SignalView):
         """Elaborate the register file onto *ports* and return its instances."""
-        width = self.width
-        depth = self.depth
-        nwrite = self.write_ports
-        nread = self.read_ports
-        byte_write = self._params["byte_write"]
-        zero_reg = self.zero_reg_fix_value is not None
-        zero_fix = self.zero_reg_fix_value or 0
-        reset_enable = self._params["reset_enable"]
-        reset_value = self._params["reset_value"] & mask(width)
-        write_mode = self.write_mode
-        read_latency = self.read_latency
+        params = self._params
+        width = params["width"]
+        depth = params["depth"]
+        nwrite = params["write_ports"]
+        nread = params["read_ports"]
+        byte_write = params["byte_write"]
+        zero_reg = params["zero_reg_fix_value"] is not None
+        zero_fix = params["zero_reg_fix_value"] or 0
+        reset_enable = params["reset_enable"]
+        reset_value = params["reset_value"] & mask(width)
+        write_mode = params["write_mode"]
+        read_latency = params["read_latency"]
         full = mask(width)
 
         proclist = []
@@ -442,9 +397,7 @@ class RegisterFile(ComponentBase):
                     )
             else:
                 base = Signal(intbv(0)[width:])
-                proclist.append(
-                    rf_base(mem, raddr[p], base, depth, zero_reg, zero_fix)
-                )
+                proclist.append(rf_base(mem, raddr[p], base, depth, zero_reg, zero_fix))
                 if write_first:
                     nxt = Signal(intbv(0)[width:])
                     proclist.append(
@@ -456,9 +409,7 @@ class RegisterFile(ComponentBase):
                 blocked = None
                 if no_change:
                     blocked = Signal(bool(0))
-                    proclist.append(
-                        rf_blocked(raddr[p], we, waddr, blocked, nwrite)
-                    )
+                    proclist.append(rf_blocked(raddr[p], we, waddr, blocked, nwrite))
                 proclist.append(
                     rf_capture(
                         src,

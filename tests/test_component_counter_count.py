@@ -89,3 +89,60 @@ def test_tick_on_terminal_count():
         (3, 1),
         (0, 0),
     ]
+
+
+def test_saturate_clamps_to_min():
+    config = {
+        "width": 4,
+        "min": 2,
+        "max": 5,
+        "reset_value": 2,
+        "wrap_mode": "saturate",
+        "steps": (-1,),
+    }
+    assert _run(config, [{"en": 1}] * 2) == [2, 2]
+
+
+def test_down_step_wraps():
+    config = {"width": 4, "max": 15, "steps": (-1,)}
+    assert _run(config, [{"en": 1}] * 3) == [15, 14, 13]
+
+
+def test_out_of_range_step_sel_holds():
+    config = {"width": 4, "max": 15, "steps": (1, 2, 3)}
+    drives = [
+        {"en": 1, "step_sel": 0},
+        {"en": 1, "step_sel": 3},
+        {"en": 1, "step_sel": 1},
+    ]
+    assert _run(config, drives) == [1, 1, 3]
+
+
+def test_load_value_above_max_clamps():
+    config = {"width": 4, "min": 0, "max": 5, "load_enable": True}
+    drives = [
+        {"en": 0, "load": 1, "load_value": 10},
+        {"en": 1, "load": 0},
+    ]
+    assert _run(config, drives) == [5, 0]
+
+
+def test_prescaler_with_load():
+    config = {"width": 4, "max": 15, "prescaler": 2, "load_enable": True}
+    drives = [
+        {"en": 0, "load": 1, "load_value": 7},
+        {"en": 1, "load": 0},
+        {"en": 1},
+    ]
+    assert _run(config, drives) == [7, 7, 8]
+
+
+def test_prescaler_without_load():
+    config = {"width": 4, "max": 15, "prescaler": 2, "load_enable": False}
+    assert _run(config, [{"en": 1}] * 3) == [0, 1, 1]
+
+
+def test_load_disabled_holds_when_disabled():
+    config = {"width": 4, "max": 15, "load_enable": False}
+    drives = [{"en": 1}, {"en": 0}, {"en": 1}]
+    assert _run(config, drives) == [1, 1, 2]

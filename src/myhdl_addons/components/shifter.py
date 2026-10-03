@@ -114,16 +114,7 @@ def bit_step(mode, src, dst, amt, k, amount, width, full):
             else:
                 dst.next = src
 
-    elif mode == SRL:
-
-        @always_comb
-        def step():
-            if amt[k]:
-                dst.next = src >> amount
-            else:
-                dst.next = src
-
-    elif mode == SRA:
+    elif mode in (SRL, SRA):
 
         @always_comb
         def step():
@@ -170,16 +161,7 @@ def unit_step(mode, src, dst, amt, j, width, full):
             else:
                 dst.next = src
 
-    elif mode == SRL:
-
-        @always_comb
-        def step():
-            if int(amt) > j:
-                dst.next = src >> 1
-            else:
-                dst.next = src
-
-    elif mode == SRA:
+    elif mode in (SRL, SRA):
 
         @always_comb
         def step():
@@ -219,13 +201,7 @@ def const_step(mode, src, dst, amount, width, full):
         def step():
             dst.next = (src << amount) & full
 
-    elif mode == SRL:
-
-        @always_comb
-        def step():
-            dst.next = src >> amount
-
-    elif mode == SRA:
+    elif mode in (SRL, SRA):
 
         @always_comb
         def step():
@@ -347,9 +323,7 @@ class BarrelShifter(ComponentBase):
         p_registered = check_registered(registered)
         p_en = check_bool(en, "en")
         p_reset_value = check_non_negative(reset_value, "reset_value") & mask(p_width)
-        p_reset_signal = (
-            reset_signal if isinstance(reset_signal, ResetSignal) else None
-        )
+        p_reset_signal = reset_signal if isinstance(reset_signal, ResetSignal) else None
         if shamt_const is not None:
             p_shamt_const = check_non_negative(shamt_const, "shamt_const")
         else:
@@ -426,10 +400,7 @@ class BarrelShifter(ComponentBase):
             const_shift = (
                 shamt_const & (width - 1) if shamt_mode == "modulo" else shamt_const
             )
-            if shamt_mode == "modulo" or not const_oor:
-                override = "none"
-            else:
-                override = "const"
+            override = "none" if shamt_mode == "modulo" or not const_oor else "const"
         else:
             if shamt_mode == "modulo":
                 masked = Signal(intbv(0)[self.shamt_width :])
@@ -493,9 +464,7 @@ class BarrelShifter(ComponentBase):
                     order = list(range(nbits))
                 for k in order:
                     nxt = Signal(intbv(0)[stage_bits:])
-                    chain.append(
-                        bit_step(mode, cur, nxt, amt, k, 1 << k, width, full)
-                    )
+                    chain.append(bit_step(mode, cur, nxt, amt, k, 1 << k, width, full))
                     cur = nxt
 
             if mode == SRA:

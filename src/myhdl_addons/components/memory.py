@@ -84,9 +84,7 @@ class SyncRam(ComponentBase):
         p_depth = check_positive(depth, "depth")
         p_byte_write = check_int(byte_write, "byte_write")
         lanes = p_width // 8
-        if p_byte_write not in (0, lanes) or (
-            p_byte_write and p_width % 8 != 0
-        ):
+        if p_byte_write not in (0, lanes) or (p_byte_write and p_width % 8 != 0):
             raise HdlConfigError(
                 f"byte_write must be 0 or width/8 ({lanes}), got {byte_write!r}"
             )
@@ -103,73 +101,40 @@ class SyncRam(ComponentBase):
             "addr_bits": max(1, ceil_log2(p_depth)),
         }
 
-    @property
-    def width(self) -> int:
-        """Word width."""
-        return self._params["width"]
-
-    @property
-    def depth(self) -> int:
-        """Number of entries."""
-        return self._params["depth"]
-
-    @property
-    def read_latency(self) -> int:
-        """Read latency (``0`` combinational / ``1`` registered)."""
-        return self._params["read_latency"]
-
-    @property
-    def write_mode(self) -> str:
-        """Same-address write behaviour."""
-        return self._params["write_mode"]
-
-    @property
-    def read_ports(self) -> int:
-        """Number of read ports."""
-        return self._params["read_ports"]
-
-    @property
-    def write_ports(self) -> int:
-        """Number of write ports."""
-        return self._params["write_ports"]
-
-    @property
-    def output_register(self) -> bool:
-        """Whether an extra output register stage is present."""
-        return self._params["output_register"]
-
-    @property
-    def addr_bits(self) -> int:
-        """Address width."""
-        return self._params["addr_bits"]
-
     def ports(self) -> SignalView:
         """Allocate and return the component interface."""
-        lanes = self.width // 8
+        width = self._params["width"]
+        addr_bits = self._params["addr_bits"]
+        write_ports = self._params["write_ports"]
+        read_ports = self._params["read_ports"]
+        lanes = width // 8
         sig = {"clk": Signal(bool(0)), "resetn": Signal(bool(0))}
-        for p in range(self.write_ports):
+        for p in range(write_ports):
             sig[f"we{p}"] = Signal(bool(0))
-            sig[f"waddr{p}"] = Signal(intbv(0, min=0, max=1 << self.addr_bits))
-            sig[f"wdata{p}"] = Signal(intbv(0)[self.width :])
+            sig[f"waddr{p}"] = Signal(intbv(0, min=0, max=1 << addr_bits))
+            sig[f"wdata{p}"] = Signal(intbv(0)[width:])
             if self._params["byte_write"]:
                 sig[f"wstrb{p}"] = Signal(intbv(0)[lanes:])
-        for p in range(self.read_ports):
-            sig[f"raddr{p}"] = Signal(intbv(0, min=0, max=1 << self.addr_bits))
-            sig[f"rdata{p}"] = Signal(intbv(0)[self.width :])
+        for p in range(read_ports):
+            sig[f"raddr{p}"] = Signal(intbv(0, min=0, max=1 << addr_bits))
+            sig[f"rdata{p}"] = Signal(intbv(0)[width:])
         return SignalView(**sig)
 
     @block
     def hdl(self, ports: SignalView):
         """Elaborate the RAM onto *ports* and return its instances."""
-        width = self.width
-        depth = self.depth
-        nwrite = self.write_ports
-        nread = self.read_ports
-        byte_write = self._params["byte_write"]
+        params = self._params
+        width = params["width"]
+        depth = params["depth"]
+        nwrite = params["write_ports"]
+        nread = params["read_ports"]
+        byte_write = params["byte_write"]
         full = mask(width)
 
         proclist = []
-        mem = [Signal(intbv(self._params["init"][i] & full)[width:]) for i in range(depth)]
+        mem = [
+            Signal(intbv(self._params["init"][i] & full)[width:]) for i in range(depth)
+        ]
 
         we = tuple(ports[f"we{p}"] for p in range(nwrite))
         waddr = tuple(ports[f"waddr{p}"] for p in range(nwrite))
@@ -220,9 +185,9 @@ class SyncRam(ComponentBase):
                 )
             )
 
-        stages = self.read_latency + (1 if self.output_register else 0)
-        write_first = self.write_mode == WRITE_FIRST
-        no_change = self.write_mode == NO_CHANGE
+        stages = params["read_latency"] + (1 if params["output_register"] else 0)
+        write_first = params["write_mode"] == WRITE_FIRST
+        no_change = params["write_mode"] == NO_CHANGE
         for p in range(nread):
             if stages == 0:
                 if write_first:
@@ -250,15 +215,21 @@ class SyncRam(ComponentBase):
                 proclist.append(rf_blocked(raddr[p], we, waddr, blocked, nwrite))
             if stages == 1:
                 proclist.append(
-                    rf_capture(src, rdata[p], ports.clk, ports.resetn, True, no_change, blocked)
+                    rf_capture(
+                        src, rdata[p], ports.clk, ports.resetn, True, no_change, blocked
+                    )
                 )
             else:
                 stage = Signal(intbv(0)[width:])
                 proclist.append(
-                    rf_capture(src, stage, ports.clk, ports.resetn, True, no_change, blocked)
+                    rf_capture(
+                        src, stage, ports.clk, ports.resetn, True, no_change, blocked
+                    )
                 )
                 proclist.append(
-                    rf_capture(stage, rdata[p], ports.clk, ports.resetn, True, False, None)
+                    rf_capture(
+                        stage, rdata[p], ports.clk, ports.resetn, True, False, None
+                    )
                 )
 
         return proclist
@@ -296,55 +267,30 @@ class SyncRom(ComponentBase):
             "addr_bits": max(1, ceil_log2(p_depth)),
         }
 
-    @property
-    def width(self) -> int:
-        """Word width."""
-        return self._params["width"]
-
-    @property
-    def depth(self) -> int:
-        """Number of entries."""
-        return self._params["depth"]
-
-    @property
-    def read_latency(self) -> int:
-        """Read latency (``0`` combinational / ``1`` registered)."""
-        return self._params["read_latency"]
-
-    @property
-    def read_ports(self) -> int:
-        """Number of read ports."""
-        return self._params["read_ports"]
-
-    @property
-    def output_register(self) -> bool:
-        """Whether an extra output register stage is present."""
-        return self._params["output_register"]
-
-    @property
-    def addr_bits(self) -> int:
-        """Address width."""
-        return self._params["addr_bits"]
-
     def ports(self) -> SignalView:
         """Allocate and return the component interface."""
+        width = self._params["width"]
+        addr_bits = self._params["addr_bits"]
         sig = {"clk": Signal(bool(0)), "resetn": Signal(bool(0))}
-        for p in range(self.read_ports):
-            sig[f"raddr{p}"] = Signal(intbv(0, min=0, max=1 << self.addr_bits))
-            sig[f"rdata{p}"] = Signal(intbv(0)[self.width :])
+        for p in range(self._params["read_ports"]):
+            sig[f"raddr{p}"] = Signal(intbv(0, min=0, max=1 << addr_bits))
+            sig[f"rdata{p}"] = Signal(intbv(0)[width:])
         return SignalView(**sig)
 
     @block
     def hdl(self, ports: SignalView):
         """Elaborate the ROM onto *ports* and return its instances."""
-        width = self.width
-        depth = self.depth
+        params = self._params
+        width = params["width"]
+        depth = params["depth"]
         full = mask(width)
-        nread = self.read_ports
-        stages = self.read_latency + (1 if self.output_register else 0)
+        nread = params["read_ports"]
+        stages = params["read_latency"] + (1 if params["output_register"] else 0)
 
         proclist = []
-        mem = [Signal(intbv(self._params["init"][i] & full)[width:]) for i in range(depth)]
+        mem = [
+            Signal(intbv(self._params["init"][i] & full)[width:]) for i in range(depth)
+        ]
 
         for p in range(nread):
             raddr = ports[f"raddr{p}"]

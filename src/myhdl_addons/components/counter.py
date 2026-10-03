@@ -91,12 +91,21 @@ def counter_loaded(load_value, loaded, lo, hi):
 
 @block
 def counter_state(
-    clk, resetn, en, load, loaded, step_next, count, presc, reset_value, prescaler, load_enable
+    clk,
+    resetn,
+    en,
+    load,
+    loaded,
+    step_next,
+    count,
+    presc,
+    reset_value,
+    prescaler,
+    load_enable,
 ):
     """Register count (and prescaler) with reset/load/enable priority."""
 
     if prescaler > 1:
-
         if load_enable:
 
             @always(clk.posedge)
@@ -129,7 +138,6 @@ def counter_state(
                         presc.next = presc + 1
 
     else:
-
         if load_enable:
 
             @always(clk.posedge)
@@ -222,46 +230,6 @@ class Counter(ComponentBase):
         }
 
     @property
-    def width(self) -> int:
-        """Counter width."""
-        return self._params["width"]
-
-    @property
-    def steps(self) -> tuple[int, ...]:
-        """Configured signed steps."""
-        return self._params["steps"]
-
-    @property
-    def min(self) -> int:
-        """Lower count bound."""
-        return self._params["min"]
-
-    @property
-    def max(self) -> int:
-        """Upper count bound."""
-        return self._params["max"]
-
-    @property
-    def wrap_mode(self) -> str:
-        """Wrap behaviour (``wrap``/``saturate``)."""
-        return self._params["wrap_mode"]
-
-    @property
-    def prescaler(self) -> int:
-        """Input-enable prescaler."""
-        return self._params["prescaler"]
-
-    @property
-    def load_enable(self) -> bool:
-        """Whether ``load``/``load_value`` are present."""
-        return self._params["load_enable"]
-
-    @property
-    def tick(self) -> bool:
-        """Whether the ``tick`` output is present."""
-        return self._params["tick"]
-
-    @property
     def _has_step_sel(self) -> bool:
         return len(self._params["steps"]) > 1
 
@@ -304,14 +272,14 @@ class Counter(ComponentBase):
 
         proclist = []
         count = ports.count
-        presc = (
-            Signal(intbv(0, min=0, max=prescaler)) if prescaler > 1 else None
-        )
+        presc = Signal(intbv(0, min=0, max=prescaler)) if prescaler > 1 else None
         load = ports.load if load_enable else None
 
         partials = [Signal(intbv(0)[width:]) for _ in steps]
         for k, step in enumerate(steps):
-            proclist.append(counter_step(wrap_mode, step, count, partials[k], lo, hi, span))
+            proclist.append(
+                counter_step(wrap_mode, step, count, partials[k], lo, hi, span)
+            )
 
         if self._has_step_sel:
             step_next = Signal(intbv(0)[width:])
