@@ -1,171 +1,228 @@
-# `myhdl_addons.components` — authoring pattern
+# `myhdl_addons.components`
 
-This package holds the independent, ISA-neutral, synthesizable building
-blocks. The **reference implementation is `alu.py`** — read it before writing
-or changing a component. The requirements live in
-`reqs/07_independent_components.md`.
+Independent, ISA-neutral, bus-agnostic synthesizable building blocks.  This
+document catalogues the **implemented components and how to use them**.
 
-Non-negotiable principles (see `reqs/00` §1.2 / `reqs/07` §1.2):
+Runtime depends only on `myhdl`.
 
-1. **Simplicity first** — the simplest solution that works; no unearned
-   abstraction.
-2. **Minimal interfaces** — a plain `SignalView` is the container; do **not**
-   add `XxxPorts`/view classes without a concrete need.
-3. **Convertibility is mandatory** — every component MUST convert to **both
-   Verilog and VHDL**. Many small `@always`/`@always_comb` processes are fine.
-4. **Tests prove behaviour, not coverage** — sign interpretation, boundaries,
-   edge cases, interactions.
+## The common usage protocol
 
-## The pattern
+Every component follows the same four steps:
 
-```python
-from myhdl import ResetSignal, Signal, always, always_comb, block, intbv, concat
-from ..common.config import ComponentBase, ceil_log2, check_positive, to_signed
-from ..common.errors import HdlConfigError, HdlTypeError
-from ..common.views import SignalView
+1. **Construct** it with keyword configuration.  All tunables are
+   elaboration-time parameters with defaults; invalid input raises
+   `myhdl_addons.common.errors.HdlConfigError` immediately.
+2. **Allocate ports** with `ports()`, which returns a `SignalView` — a named
+   bag of signals, accessible as attributes (`ports.a`) and by name
+   (`ports["a"]`); `ports.names` / `ports.signals` enumerate them.
+3. **Elaborate** with `hdl(ports)`, which returns the list of MyHDL instances
+   for the configured design.
+4. **Introspect** with `as_dict()` (effective configuration) and `repr()`.
 
-AVAIL_MODES = ("MODE_A", "MODE_B")  # allowed feature names (module-level)
-
-
-class Foo(ComponentBase):
-    """One-paragraph docstring; cite requirement IDs (IC-FR-0xx)."""
-
-    def __init__(
-        self,
-        width: int = 32,
-        modes=None,
-        registered: bool = False,
-        en: bool = False,
-        reset_value: int = 0,
-        reset_signal: ResetSignal | None = None,
-    ) -> None:
-        # 1) validate + normalise every tunable
-        p_width = int(check_positive(width, "width"))
-        p_modes = AVAIL_MODES if modes is None else tuple(set(modes))
-        # 2) store the *effective* config in self._params (an ordered dict)
-        self._params = {
-            "width": p_width,
-            "modes": p_modes,
-            "registered": bool(registered),
-            "en": bool(en),
-            "reset_value": reset_value,
-            "reset_signal": reset_signal
-            if isinstance(reset_signal, ResetSignal)
-            else None,
-        }
-
-    def ports(self) -> SignalView:
-        """Allocate and return the component interface."""
-        sig = {
-            "a": Signal(intbv(0)[self._params["width"] :]),
-            "y": Signal(intbv(0)[self._params["width"] :]),
-        }
-        if self._params["registered"]:
-            sig["clk"] = Signal(bool(0))
-            if self._params["reset_signal"] is None:
-                self._params["reset_signal"] = ResetSignal(0, active=0, isasync=False)
-                sig["reset"] = self._params["reset_signal"]
-            if self._params["en"]:
-                sig["en"] = Signal(bool(0))
-        return SignalView(**sig)
-
-    @block
-    def hdl(self, ports: SignalView):
-        """Build the processes onto *ports* and return a list of instances."""
-        proclist = []
-        # ... one process per enabled feature (see below) ...
-        return proclist
-
-    # helper methods are fine when they earn their keep (see Alu):
-    #   get_op_intmap(), register_op(), ...
-```
-
-### `ComponentBase` constructor — configuration
-
-* Every tunable is an **elaboration-time keyword parameter with a default**.
-* Validate with `common.config` helpers; invalid input raises `HdlConfigError`.
-* Store the **effective** config in `self._params` (an ordered `dict`).
-  `as_dict()`/`repr()` come from `ComponentBase`; no extra config object.
-* Module-level `AVAIL_*` tuples name the allowed feature values.
-* Feature subsets (ops/flags/modes/outputs) **default to the full `AVAIL_*`
-  set**; a caller passes a subset to disable features. Do not add a separate
-  `_DEFAULT_*` subset constant.
-* Normalise feature subsets at construction (e.g. `tuple(set(ops))`).
-
-### `ports()` — the interface signals
-
-* Allocate signals here and return a **name→signal** `SignalView`
-  (`Signal(intbv(0)[width:])`, `Signal(bool(0))`).
-* Include `clk`/`reset`/`en` **only** when the feature needs them; a
-  combinational component has no clock.
-* Use `myhdl.ResetSignal(0, active=0, isasync=False)` for the reset port
-  (named `reset` in the Alu pattern).
-
-### `@block hdl(self, ports)` — the implementation
-
-* Return a **list of instances** (`proclist`).
-* **One process per enabled feature**, created conditionally at elaboration —
-  disabling a feature removes its logic (zero overhead):
-
-  ```python
-  proclist = []
-  if "MODE_A" in self._params["modes"]:
-
-      @always_comb
-      def foo_mode_a():
-          ports.y.next = ports.a + 1
-
-      proclist.append(foo_mode_a)
-  ```
-
-* Decorators:
-  * combinational → `@always_comb`; state → `@always(clk.posedge)`.
-  * `@instance` is **testbench-only** (not convertible).
-  * `@always_comb` only sees signals read *directly*; when the body indexes a
-    tuple/list of signals or calls a helper, use an explicit sensitivity list:
-    `@always(ports.sel, *partial_y)`.
-  * prefer `@always(clk.posedge)` with explicit reset over `@always_seq`
-    (its reset handling was not detected).
-* Typical structure: compute per-feature partial results into a **tuple of
-  signals**, then a mux process selects the result; add a registered output
-  stage (`@always(clk.posedge)`) when `registered` is set.
-
-### Helper methods
-
-Add helpers only when they simplify the block (e.g. `get_op_intmap()` maps
-names→codes, `register_op(name, cb)` is an extension hook). Keep them
-elaboration-time Python; do not wrap `@always` creation in a plain helper
-function — the function that creates a process must itself be a `@block`.
-
-## Convertibility rules (inside every process body and any function it calls)
-
-MyHDL's converter rejects: tuple unpacking/assignment, dict literals and
-subscripts, list literals, `lambda`, nested `def`, `try`, `import`, multiple
-assignment, chained comparisons, true division (`/`), and ternary
-(`x if c else y`). A called function's free variables must be only `int` or
-`Signal` — inline logic instead of closing over `self`/sets/lists.
-
-Useful idioms: `concat(intbv(0)[1:], sig)` to widen; keep a carry bit in a
-`width+1` signal and read `partial[width]` / `partial[width:]`;
-`common.config.to_signed(int(sig), width)` for signed compare.
-
-## Testing
-
-Two files per component:
-
-* `tests/test_component_<name>_<aspect>.py` — **behaviour-first** simulation.
-  Drive `ports.x.next`, `yield delay(1)` / `clk.posedge`, then assert on
-  `int(ports.y)`. Cover every enabled feature, sign interpretation,
-  boundaries/edge operands, and interactions.
-* `tests/test_component_<name>_conversion.py` — a smoke test that elaborates
-  with `comp.hdl(comp.ports())` and converts **both** HDLs via the
-  `convert_dut` fixture in `tests/conftest.py`.
+Options that are switched off **remove their ports** (zero overhead): e.g. a
+combinational component has no `clk`, and `Mux(valid=False)` has no `valid`
+port.  Feature subsets accept either canonical integer codes or their string
+names (e.g. `Alu(ops=["ADD", "SUB"])`).
 
 ```python
-@pytest.mark.parametrize("hdl", ["Verilog", "VHDL"])
-def test_foo_converts(hdl, convert_dut):
-    comp = Foo(width=8)
-    convert_dut(comp.hdl(comp.ports()), hdl, f"foo_{hdl.lower()}")
+from myhdl_addons.components import Mux
+
+mux = Mux(width=8, n=4)          # validated configuration
+ports = mux.ports()              # named signals: sel, inputs, y
+dut = mux.hdl(ports)             # MyHDL instances; simulate or instantiate
 ```
 
-Coverage ≥ 85 %/file is the floor, not the goal.
+`AVAIL_*` constants (`AVAIL_OPS`, `AVAIL_FLAGS`, `AVAIL_OUTPUTS`, `MODES`,
+`MODE_NAMES`, `STRUCTURES`, `PRIORITIES`, `INTERFACES`, `STREAM`, `WR_RD`,
+`WRITE_MODES`, `READ_FIRST`, `WRITE_FIRST`, `NO_CHANGE`) name the allowed
+values and are re-exported from `myhdl_addons.components`.
+
+---
+
+## Combinational building blocks
+
+Combinational components offer a uniform **`registered`** option: `registered=0`
+is pure combinational (no clock), `registered=1` adds an output register
+(`clk`/`reset`, plus `en` when enabled) and one cycle of latency, with
+`reset_value` as the registered reset.  Registered components use the `reset`
+port; sequential components use active-low `resetn`.
+
+### `Alu` — arithmetic/logic unit
+
+`Alu(width=32, ops=None, flags=None, registered=False, en=False, reset_value=0, reset_signal=None)`
+
+- `ops` ⊆ `AVAIL_OPS` = `NOP, ADD, SUB, AND, OR, XOR, SLT, SLTU, PASS_A, PASS_B`
+  (default all; `NOP` is code 0).  No shift operations — use `BarrelShifter`.
+- `flags` ⊆ `AVAIL_FLAGS` = `zero, lt, ltu, carry`.
+- Ports: `a`, `b`, `op`, `y`; one port per enabled flag; registered adds
+  `clk`/`reset` (+`en`).
+- **Usage:** the `op` value is the index into the enabled op tuple; get it with
+  `alu.get_op_intmap()["ADD"]`.  `SLT` is signed, `SLTU` unsigned; `carry` is
+  the add carry / subtract borrow.  New ops can be attached with
+  `alu.register_op(name, callback)`.
+
+### `BarrelShifter` — shifts and rotates
+
+`BarrelShifter(width=32, modes=None, structure="logarithmic", registered=0, en=False, reset_value=0, reset_signal=None, shamt_const=None, shamt_bits=None, shamt_mode="modulo")`
+
+- `modes` ⊆ `MODES` = `SLL, SRL, SRA, ROL, ROR`, selected on the `mode` port by
+  their canonical codes `0..4` (`MODE_NAMES` maps code → name).
+- `structure` ∈ `STRUCTURES` = `logarithmic / two_stage / serial`.
+- `shamt_mode` ∈ `modulo / saturate / zero` (out-of-range shift handling).
+- `shamt_const` fixes the shift amount and **omits** the `shamt` port;
+  `shamt_bits` overrides the amount width (default `ceil(log2 width)`; in
+  `saturate` mode the `shamt` port is one bit wider).
+- Ports: `data`, `mode`, `y`, `shamt` (unless `shamt_const`); registered adds
+  `clk`/`reset` (+`en`).
+- **Usage:** drive `mode` with the canonical code; a disabled or unknown mode
+  yields `y = 0`.
+
+### `Incrementer` — signed stepper
+
+`Incrementer(width=32, steps=None, load_enable=True, wrap_mode="wrap", carry=False, registered=0, reset_value=0, reset_signal=None)`
+
+- `steps` is a non-empty tuple of signed constants (default `(1,)`); the
+  `step_sel` port appears when there is more than one step.
+- `wrap_mode` ∈ `WRAP_MODES` = `wrap / saturate`.
+- Ports: `a`, `en`, `y`; `step_sel`; `load`/`load_value`; `carry`; registered
+  adds `clk`/`reset` (+`en`).
+- **Usage:** `y = a + steps[step_sel]`; `load` overrides `en`/`step_sel`;
+  `en=0` holds `a`; an out-of-range `step_sel` holds `a`.
+
+### `Comparator` — comparison flags
+
+`Comparator(width=32, outputs=None, signed=True, registered=False, en=False, reset_value=0, reset_signal=None)`
+
+- `outputs` ⊆ `AVAIL_OUTPUTS` = `eq, ne, lt, ltu, gt, gtu, ge, le`.
+- `signed` makes `lt/gt/ge/le` two's-complement; `ltu/gtu` are always unsigned.
+- Ports: `a`, `b`; one port per enabled flag; registered adds `clk`/`reset` (+`en`).
+
+### `Mux` — binary-select multiplexer
+
+`Mux(width, n, default_value=0, valid=False, registered=False, en=False, reset_value=0, reset_signal=None)`
+
+- Ports: `inputs` (a tuple of `n` signals, `ports.inputs[i]`), `sel`, `y`;
+  optional `valid`; registered adds `clk`/`reset` (+`en`).
+- **Usage:** `y = inputs[sel]` while `sel < n`, otherwise `default_value`;
+  `valid = (sel < n)`.  `mux.sel_bits` gives the `sel` width.
+
+### `OneHotMux` — one-hot/OR-reduce multiplexer
+
+`OneHotMux(width, n, valid=False, strict=False, registered=False, en=False, reset_value=0, reset_signal=None)`
+
+- Ports: `inputs`, `sel` (`n` bits), `y`; optional `valid`; registered adds
+  `clk`/`reset` (+`en`).
+- **Usage:** `y` is the OR of every `inputs[i]` whose `sel[i]` is set;
+  `valid` is `sel != 0`, or with `strict=True` exactly one bit set.
+
+### `Decoder` — binary → one-hot
+
+`Decoder(n, en=False, registered=0, reset_value=0, reset_signal=None)`
+
+- Ports: `sel` (`dec.sel_bits`), `onehot` (`n` bits), optional `en`, registered
+  adds `clk`/`reset`.
+- **Usage:** `onehot = 1 << sel` when `sel < n`, else `0`; `en=0` forces zero.
+
+### `PriorityEncoder` — bit vector → index
+
+`PriorityEncoder(n, priority="low", en=False, registered=0, reset_value=0, reset_signal=None)`
+
+- `priority` ∈ `PRIORITIES` = `low / high` (lowest or highest set bit wins).
+- Ports: `din` (`n` bits), `index` (`pe.index_bits`), `valid`, optional `en`,
+  registered adds `clk`/`reset`.
+- **Usage:** `index` is the winning set bit; `valid = (din != 0)` (forced low
+  when `en=0`).
+
+### `AddressDecoder` — address-window → one-hot selects
+
+`AddressDecoder(adr_width=32, windows=None, en=False, valid=False, registered=0, reset_value=0, reset_signal=None)`
+
+- `windows` is a non-empty list of **non-overlapping** `(base, size)` address
+  windows; window `i` drives output `sel{i}`.  Overlap, out-of-range windows or
+  an empty list raise `HdlConfigError` at construction.
+- Ports: `adr`; `sel0 … sel{n-1}`; optional `en`, `valid`; registered adds
+  `clk`/`reset`.
+- **Usage:** `sel{i}` asserts while `base_i <= adr < base_i + size_i` (and
+  `en=1`); a gap/out-of-range address yields all-zero selects; `valid` is any
+  select asserted.  `ad.num_windows` gives `n`.
+
+```python
+from myhdl_addons.components import AddressDecoder
+
+dec = AddressDecoder(adr_width=16, windows=[(0x0000, 0x100), (0x1000, 0x100)])
+ports = dec.ports()          # adr, sel0, sel1
+```
+
+---
+
+## Sequential building blocks
+
+Sequential components always have `clk`; resets are **active-low `resetn`**
+unless stated otherwise.
+
+### `Register` — plain and pipeline register
+
+`Register(fields=None, en=True, flush=False, load=False, reset_enable=True, reset_values=None, flush_values=None, load_values=None, init=None)`
+
+- `fields` is a list of `(name, width)` pairs (default `[("q", 32)]`).
+- Ports: `clk`, `resetn`; per field `d_<name>` and `q_<name>`; `en`, `flush`,
+  `load` when enabled.
+- **Usage:** control priority is `reset > flush > load > en > hold`; `en=0`
+  holds, `flush`/`load` force their configured per-field values.  A **pipeline
+  register** is simply a multi-field `Register` with `flush` enabled.
+
+### `Counter` — sequential stepper
+
+`Counter(width=32, steps=None, min=0, max=None, wrap_mode="wrap", prescaler=1, load_enable=True, reset_value=0, tick=True)`
+
+- The sequential counterpart of `Incrementer` (same `steps`/`step_sel`/
+  `wrap_mode`/`load` semantics).
+- Ports: `clk`, `resetn`, `en`, `count`; `step_sel`; `load`/`load_value`;
+  optional `tick`.
+- **Usage:** counts within `[min, max]`; `prescaler` divides the input `en`;
+  `tick` asserts at the terminal count.
+
+### `RegisterFile` — multi-port register bank
+
+`RegisterFile(width=32, depth=32, read_ports=2, write_ports=1, read_latency=0, write_mode="read_first", zero_reg_fix_value=None, reset_enable=True, reset_value=0, init=None, byte_write=False)`
+
+- Ports: `clk`, `resetn`; per write port `we{p}`/`waddr{p}`/`wdata{p}` (and
+  `wstrb{p}` with `byte_write`); per read port `raddr{p}`/`rdata{p}`.
+- `write_mode` ∈ `WRITE_MODES` = `read_first / write_first / no_change` for
+  same-address accesses; `read_latency` is `0` (async) or `1` (registered).
+- `zero_reg_fix_value` (e.g. `0`) makes index 0 a read-only constant (writes
+  ignored); `None` leaves index 0 as ordinary storage.
+- `byte_write=True` enables per-lane write strobes (`width` must be a multiple
+  of 8).
+
+### `SyncRam` — read/write memory
+
+`SyncRam(width, depth, read_latency=1, write_mode="read_first", read_ports=1, write_ports=1, byte_write=0, init=None, output_register=False)`
+
+- Ports: `clk`, `resetn`; per write port `we{p}`/`waddr{p}`/`wdata{p}` (+
+  `wstrb{p}`); per read port `raddr{p}`/`rdata{p}`.
+- `byte_write` is `0` (off) or `width/8`.  `init` loads an optional image.
+- **Usage:** total read latency is `read_latency + output_register`.  Reset
+  does **not** clear contents; use `init` to define the power-up image.
+
+### `SyncRom` — read-only memory
+
+`SyncRom(width, depth, init, read_latency=1, read_ports=1, output_register=False)`
+
+- `init` is **required** and must have length `depth`.
+- Ports: `clk`, `resetn`; per read port `raddr{p}`/`rdata{p}`.
+- Total read latency is `read_latency + output_register`.
+
+### `Fifo` — synchronous FIFO / skid buffer
+
+`Fifo(width, depth, interface="wr_rd", fall_through=False, almost_full=0, almost_empty=0, count=False, flush=False, registered_outputs=False)`
+
+- `interface` ∈ `INTERFACES` = `wr_rd` (native) or `stream` (valid/ready).
+- Ports (`wr_rd`): `clk`, `resetn`, `wr_en`, `wdata`, `rd_en`, `rdata`, `full`,
+  `empty`.
+- Ports (`stream`): `clk`, `resetn`, `valid_in`, `ready_in`, `data_in`,
+  `valid_out`, `ready_out`, `data_out`.
+- Optional `count`, `almost_full`, `almost_empty`, `flush`.
+- **Usage:** `fall_through=True` gives a first-word-fall-through (combinational)
+  read; `registered_outputs=True` adds an output register stage.  A **skid
+  buffer** is `Fifo(depth=2, interface="stream")`.

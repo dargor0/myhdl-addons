@@ -13,6 +13,7 @@ Most components expose their ports through a :class:`SignalView`
 from ..common.config import ComponentBase
 from ..common.errors import HdlConfigError, HdlError
 from ..common.views import SignalView, connect
+from .address_decoder import AddressDecoder
 from .alu import (
     AVAIL_FLAGS,
     AVAIL_OPS,
@@ -76,6 +77,7 @@ __all__ = [
     "WRITE_FIRST",
     "WRITE_MODES",
     "WR_RD",
+    "AddressDecoder",
     "Alu",
     "BarrelShifter",
     "Comparator",
