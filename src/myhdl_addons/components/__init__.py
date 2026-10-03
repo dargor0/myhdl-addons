@@ -19,7 +19,7 @@ from .alu import (
     AVAIL_OPS,
     Alu,
 )
-from .comparator import OUTPUTS, Comparator, ComparatorPorts
+from .comparator import AVAIL_OUTPUTS, Comparator
 from .counter import Counter, CounterPorts
 from .encoder import (
     PRIORITIES,
@@ -64,12 +64,12 @@ from .shifter import (
 __all__ = [
     "AVAIL_FLAGS",
     "AVAIL_OPS",
+    "AVAIL_OUTPUTS",
     "INTERFACES",
     "MODES",
     "MODE_NAMES",
     "NO_CHANGE",
     "OP_NAMES",
-    "OUTPUTS",
     "PRIORITIES",
     "READ_FIRST",
     "ROL",
@@ -87,7 +87,6 @@ __all__ = [
     "BarrelShifter",
     "BarrelShifterPorts",
     "Comparator",
-    "ComparatorPorts",
     "ComponentBase",
     "Counter",
     "CounterPorts",

@@ -10,11 +10,11 @@ from collections.abc import Callable, Sequence
 from myhdl import (
     ResetSignal,
     Signal,
-    always, 
+    always,
     always_comb,
     block,
+    concat,
     intbv,
-    concat, 
 )
 
 from ..common.config import (
@@ -131,7 +131,9 @@ class Alu(ComponentBase):
         partial_y = Signal(intbv(0)[width + 1 :])
 
         # partial subops
-        partial_ops_y = tuple([Signal(intbv(0)[width + 1 :]) for _ in self._params["ops"]])
+        partial_ops_y = tuple(
+            [Signal(intbv(0)[width + 1 :]) for _ in self._params["ops"]]
+        )
 
         op_map = self.get_op_intmap()
         op_idx_max = len(partial_ops_y)
@@ -163,7 +165,10 @@ class Alu(ComponentBase):
 
             @always_comb
             def alu_proc_sub():
-                partial_ops_y[op_idx_sub].next = partial_a - partial_b
+                # mask so a<b wraps (MyHDL assignment forbids negatives)
+                partial_ops_y[op_idx_sub].next = (partial_a - partial_b) & (
+                    (1 << (width + 1)) - 1
+                )
 
             proclist.append(alu_proc_sub)
 
@@ -247,7 +252,7 @@ class Alu(ComponentBase):
         # fall back to always decorator with manual sensitivity list
         @always(ports.op, *partial_ops_y)
         def alu_mux():
-            if int(ports.op) == 0 or int(ports.op) > op_idx_max:
+            if int(ports.op) == 0 or int(ports.op) >= op_idx_max:
                 partial_y.next = 0
             else:
                 partial_y.next = partial_ops_y[int(ports.op)]
@@ -305,12 +310,12 @@ class Alu(ComponentBase):
         if self._params["registered"]:
             en_sig = ports.en if self._params["en"] else Signal(bool(1))
             reset_y_val = intbv(self._params["reset_value"])[width:]
-            
+
             # NOTE: reset signal level and async is hardcoded to active high synchronous.
             if not isinstance(ports.reset, ResetSignal):
                 raise HdlTypeError("Reset signal must be of ResetSignal type")
 
-            # NOTE: @always_seq is not detecting the reset functionality, 
+            # NOTE: @always_seq is not detecting the reset functionality,
             # Changing back to @always decorator
 
             @always(ports.clk.posedge)
