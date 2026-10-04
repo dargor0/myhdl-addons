@@ -33,7 +33,6 @@ __all__ = [
     "check_registered",
     "mask",
     "normalize_subset",
-    "to_signed",
 ]
 
 
@@ -153,14 +152,6 @@ def mask(width: int) -> int:
     """Return a *width*-bit all-ones mask."""
     check_positive(width, "width")
     return (1 << width) - 1
-
-
-def to_signed(value: int, width: int) -> int:
-    """Interpret a *width*-bit unsigned integer as two's-complement signed."""
-    # check_positive(width, "width")
-    if value & (1 << (width - 1)):
-        return value - (1 << width)
-    return value
 
 
 def normalize_subset(

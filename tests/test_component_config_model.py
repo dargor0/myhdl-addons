@@ -14,7 +14,6 @@ from myhdl_addons.common.config import (
     check_registered,
     mask,
     normalize_subset,
-    to_signed,
 )
 from myhdl_addons.components import HdlConfigError
 
@@ -51,8 +50,6 @@ def test_bits_helpers():
     assert ceil_log2(3) == 2
     assert ceil_log2(8) == 3
     assert mask(4) == 0xF
-    assert to_signed(0xF, 4) == -1
-    assert to_signed(0x7, 4) == 7
     with pytest.raises(HdlConfigError):
         ceil_log2(0)
     with pytest.raises(HdlConfigError):

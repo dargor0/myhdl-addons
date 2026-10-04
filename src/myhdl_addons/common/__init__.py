@@ -30,7 +30,6 @@ from .config import (
     check_registered,
     mask,
     normalize_subset,
-    to_signed,
 )
 from .errors import (
     AxiConfigError,
@@ -85,5 +84,4 @@ __all__ = [
     "connect",
     "mask",
     "normalize_subset",
-    "to_signed",
 ]

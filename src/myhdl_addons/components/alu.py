@@ -21,7 +21,6 @@ from ..common.config import (
     ComponentBase,
     ceil_log2,
     check_positive,
-    to_signed,
 )
 from ..common.errors import HdlConfigError, HdlTypeError
 from ..common.views import SignalView
@@ -261,10 +260,13 @@ class Alu(ComponentBase):
 
         @always_comb
         def alu_lt_compute():
-            if to_signed(int(partial_a), width) < to_signed(int(partial_b), width):
-                partial_lt.next = 1
+            # signed compare without a helper: MyHDL turns a helper's ``return``
+            # into a Verilog ``function`` with ``disable``, which Yosys rejects.
+            # Compare the sign bits first, then fall back to unsigned.
+            if partial_a[width - 1] != partial_b[width - 1]:
+                partial_lt.next = partial_a[width - 1]
             else:
-                partial_lt.next = 0
+                partial_lt.next = partial_a < partial_b
             if partial_a < partial_b:
                 partial_ltu.next = 1
             else:

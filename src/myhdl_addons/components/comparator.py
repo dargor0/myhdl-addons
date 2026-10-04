@@ -16,7 +16,6 @@ from ..common.config import (
     check_bool,
     check_positive,
     normalize_subset,
-    to_signed,
 )
 from ..common.views import SignalView
 
@@ -139,9 +138,10 @@ class Comparator(ComponentBase):
 
                 @always_comb
                 def lt_proc():
-                    lt_dst.next = to_signed(int(ports.a), width) < to_signed(
-                        int(ports.b), width
-                    )
+                    if ports.a[width - 1] != ports.b[width - 1]:
+                        lt_dst.next = ports.a[width - 1]
+                    else:
+                        lt_dst.next = ports.a < ports.b
 
             else:
 
@@ -157,9 +157,10 @@ class Comparator(ComponentBase):
 
                 @always_comb
                 def gt_proc():
-                    gt_dst.next = to_signed(int(ports.a), width) > to_signed(
-                        int(ports.b), width
-                    )
+                    if ports.a[width - 1] != ports.b[width - 1]:
+                        gt_dst.next = ports.b[width - 1]
+                    else:
+                        gt_dst.next = ports.a > ports.b
 
             else:
 
@@ -175,9 +176,10 @@ class Comparator(ComponentBase):
 
                 @always_comb
                 def ge_proc():
-                    ge_dst.next = to_signed(int(ports.a), width) >= to_signed(
-                        int(ports.b), width
-                    )
+                    if ports.a[width - 1] != ports.b[width - 1]:
+                        ge_dst.next = ports.b[width - 1]
+                    else:
+                        ge_dst.next = ports.a >= ports.b
 
             else:
 
@@ -193,9 +195,10 @@ class Comparator(ComponentBase):
 
                 @always_comb
                 def le_proc():
-                    le_dst.next = to_signed(int(ports.a), width) <= to_signed(
-                        int(ports.b), width
-                    )
+                    if ports.a[width - 1] != ports.b[width - 1]:
+                        le_dst.next = ports.a[width - 1]
+                    else:
+                        le_dst.next = ports.a <= ports.b
 
             else:
 
