@@ -115,6 +115,23 @@ port; sequential components use active-low `resetn`.
 - **Usage:** `y` is the OR of every `inputs[i]` whose `sel[i]` is set;
   `valid` is `sel != 0`, or with `strict=True` exactly one bit set.
 
+### `MuxTree` — balanced-tree multiplexer
+
+`MuxTree(width=32, n=2, policy="lastinput", default_value=0, alias=0)`
+
+- Ports: `in0 … in{n-1}` (individual named ports), `sel` (`ceil(log2 n)` bits,
+  absent when `n == 1`), `y`; pure combinational (no `clk`/`reset`).
+- **Usage:** `y = in[sel]` while `sel < n`.  Built as a **balanced binary tree
+  of 2:1 muxes** with `ceil(log2 n)` levels, so the depth is the same regardless
+  of the synthesis tool (a priority `if/elif` chain instead relies on the tool
+  to recognise mutually-exclusive selects and rebalance).
+- When `n` is not a power of two, the unused select codes are resolved by the
+  required `policy` (`POLICIES` = `const` / `lastinput` / `alias` / `wrap`):
+  `const` → `default_value`; `lastinput` → `in[n-1]` (cheapest; identical
+  padding leaves collapse); `alias` → `in[alias]`; `wrap` → `in[sel mod n]`.
+  An unknown policy, or `policy=None` for non-power-of-two `n`, raises
+  `HdlConfigError`.
+
 ### `Decoder` — binary → one-hot
 
 `Decoder(n, en=False, registered=0, reset_value=0, reset_signal=None)`

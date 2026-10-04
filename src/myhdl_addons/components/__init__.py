@@ -35,6 +35,7 @@ from .fifo import (
 from .incrementer import WRAP_MODES, Incrementer
 from .memory import SyncRam, SyncRom
 from .mux import Mux, OneHotMux
+from .mux_tree import POLICIES, MuxTree
 from .regfile import (
     NO_CHANGE,
     READ_FIRST,
@@ -64,6 +65,7 @@ __all__ = [
     "MODE_NAMES",
     "NO_CHANGE",
     "OP_NAMES",
+    "POLICIES",
     "PRIORITIES",
     "READ_FIRST",
     "ROL",
@@ -89,6 +91,7 @@ __all__ = [
     "HdlError",
     "Incrementer",
     "Mux",
+    "MuxTree",
     "OneHotMux",
     "PriorityEncoder",
     "Register",
