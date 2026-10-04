@@ -12,15 +12,12 @@ and the master's original ID is restored on the ``B``/``R`` responses; the read
 grant is held until ``RLAST``.
 
 Convertibility notes
---------------------
+-------------------
 
-A single list cannot hold the port signals because their types/widths differ
-(``bool`` plus several ``intbv`` widths), and MyHDL rejects such mixed lists.
-Instead every signal gets its own homogeneous per-master / per-slave list, and
-each shared-bus signal is driven by exactly one small process.  The mux/fanout
-processes use ``@always_comb``: it runs at time 0 and extends every element of
-a referenced signal list into its sensitivity, so both the initial default
-levels and later list-element changes are tracked.
+A list-of-signals indexed inside a process is converted by MyHDL into a Verilog
+memory that is then continuously assigned (invalid RTL).  Every shared verdict
+is therefore driven by **elaboration-built chains of per-element stages** over
+individual signals (see :mod:`myhdl_addons.bus_common.muxing`).
 """
 
 from __future__ import annotations
@@ -28,9 +25,17 @@ from __future__ import annotations
 from myhdl import Signal, always, always_comb, block, intbv
 
 from ...bus_common import address_decoder
+from ...bus_common.muxing import (
+    fanout_gated,
+    fanout_plain,
+    grant_chain,
+    mresp_gated,
+    mresp_plain,
+    or_chain,
+    select_chain,
+)
 from ..checks import AxiConfigError
 from ..interface import MASTER_OUT, SLAVE_OUT
-from ..protocol import check_no_contention
 from ..status import RESP_DECERR
 from .base import AxiContext, AxiInterconnectBase
 
@@ -46,166 +51,79 @@ def _clone(sig):
     return Signal(intbv(0)[len(sig.val) :])
 
 
-# -- reusable convertible helpers -----------------------------------------
-# ``_GATED_OUT`` signals are qualified by the per-slave select; all others are
-# broadcast.  Each helper drives exactly one destination list/scalar.
+def _kind(sig):
+    """Return ``(bool_out, width)`` for a signal."""
+    if isinstance(sig.val, bool):
+        return True, 0
+    return False, len(sig.val)
+
+
+# -- small elaboration stages ---------------------------------------------
 
 
 @block
-def bus_mux(grants, srcs, dst, n):
-    """Drive ``dst`` with the granted master's signal (0 if none granted)."""
+def req_stage(m_awvalid, m_arvalid, req):
+    """One master's request: ``awvalid or arvalid``."""
 
     @always_comb
     def p():
-        dst.next = 0
-        for i in range(n):
-            if grants[i]:
-                dst.next = srcs[i]
+        req.next = m_awvalid or m_arvalid
 
     return p
 
 
 @block
-def bus_mux_index(grants, dst, n):
-    """Drive ``dst`` with the index of the granted master (ID remap)."""
+def mresp_id(src, grant, orig_id, write_r, is_write, dst):
+    """Route a response ID, restoring the granted master's original ID."""
 
     @always_comb
     def p():
-        dst.next = 0
-        for i in range(n):
-            if grants[i]:
-                dst.next = i
+        if grant and (write_r == is_write):
+            dst.next = orig_id
+        else:
+            dst.next = src
 
     return p
 
 
 @block
-def bus_fanout_gated(src, dsts, sels, n):
-    """Broadcast ``src`` to every slave, qualified by ``sels[j]``."""
+def sel_latch(clk, aresetn, active, selects, sel_latched):
+    """Latch one slave's chip-select while idle (holds during a transaction)."""
 
-    @always_comb
+    @always(clk.posedge)
     def p():
-        for j in range(n):
-            dsts[j].next = src and sels[j]
+        if not aresetn:
+            sel_latched.next = 0
+        elif not active:
+            sel_latched.next = selects
 
     return p
 
 
 @block
-def bus_fanout_plain(src, dsts, n):
-    """Broadcast ``src`` to every slave."""
+def resp_default(sel_out, out, active, sel_any, write_r, is_write, default):
+    """Response mux default: selected slave, else a default (DECERR/1)."""
 
     @always_comb
     def p():
-        for j in range(n):
-            dsts[j].next = src
+        if active and (not sel_any) and (write_r == is_write):
+            out.next = default
+        else:
+            out.next = sel_out
 
     return p
 
 
 @block
-def bus_resp_mux(sels, srcs, dst, n):
-    """Select the addressed slave's response signal."""
+def ready_default(sel_out, out, sel_any):
+    """Ready mux default: selected slave's ready, else 1 when unselected."""
 
     @always_comb
     def p():
-        dst.next = 0
-        for j in range(n):
-            if sels[j]:
-                dst.next = srcs[j]
-
-    return p
-
-
-@block
-def bus_resp_ready(sels, srcs, dst, sel_any, n):
-    """Response mux with the default-slave ``ready`` level when unselected."""
-
-    @always_comb
-    def p():
-        dst.next = 0
-        for j in range(n):
-            if sels[j]:
-                dst.next = srcs[j]
         if not sel_any:
-            dst.next = 1
-
-    return p
-
-
-@block
-def bus_resp_write(sels, srcs, dst, sel_any, active, write_r, decerr, n):
-    """Response mux for write-channel signals, defaulting to ``DECERR``.
-
-    The default (unmapped) response is qualified by ``active`` so it appears
-    only after the request has been granted -- asserting it combinationally
-    would let the FSM observe an early response and release the bus before the
-    master sampled it.
-    """
-
-    @always_comb
-    def p():
-        dst.next = 0
-        for j in range(n):
-            if sels[j]:
-                dst.next = srcs[j]
-        if active and not sel_any and write_r:
-            dst.next = decerr
-
-    return p
-
-
-@block
-def bus_resp_read(sels, srcs, dst, sel_any, active, write_r, decerr, n):
-    """Response mux for read-channel signals, defaulting to ``DECERR``."""
-
-    @always_comb
-    def p():
-        dst.next = 0
-        for j in range(n):
-            if sels[j]:
-                dst.next = srcs[j]
-        if active and not sel_any and not write_r:
-            dst.next = decerr
-
-    return p
-
-
-@block
-def bus_mresp_gated(src, dsts, grants, n):
-    """Route the shared response to the granted master, gated by its grant."""
-
-    @always_comb
-    def p():
-        for i in range(n):
-            dsts[i].next = src and grants[i]
-
-    return p
-
-
-@block
-def bus_mresp_plain(src, dsts, n):
-    """Broadcast the shared response to every master."""
-
-    @always_comb
-    def p():
-        for i in range(n):
-            dsts[i].next = src
-
-    return p
-
-
-@block
-def bus_mresp_id(src, dsts, grants, orig_id, write_r, when_write, n):
-    """Route a response ID, restoring the master's original ID when granted."""
-
-    @always_comb
-    def p():
-        for i in range(n):
-            dsts[i].next = src
-        for i in range(n):
-            if grants[i] and (write_r == when_write):
-                dsts[i].next = orig_id
+            out.next = 1
+        else:
+            out.next = sel_out
 
     return p
 
@@ -235,7 +153,6 @@ class AxiSharedBus(AxiInterconnectBase):
                 f"id_width={id_width} cannot host {nm} unique remapped IDs"
             )
 
-        # per-name shared-bus signals and per-endpoint homogeneous signal lists
         s_out = {name: _clone(getattr(masters[0], name)) for name in out_names}
         s_in = {name: _clone(getattr(masters[0], name)) for name in in_names}
         m_out = {name: [getattr(m, name) for m in masters] for name in out_names}
@@ -266,30 +183,40 @@ class AxiSharedBus(AxiInterconnectBase):
         write_r = Signal(bool(0))
         orig_id = Signal(intbv(0)[id_width:])
         sel_any = Signal(bool(0))
+        any_req = Signal(bool(0))
+        owner_next = Signal(intbv(0, min=0, max=nm))
+        next_write = Signal(bool(0))
+        next_awid = Signal(intbv(0)[id_width:])
+        next_arid = Signal(intbv(0)[id_width:])
 
         dec = address_decoder(
             s_adr, selects, ctx.address_map.bases(), ctx.address_map.sizes()
         )
 
-        @always_comb
-        def req_logic():
-            for i in range(nm):
-                reqs[i].next = m_awvalid[i] or m_arvalid[i]
+        proclist = [dec]
+        for i in range(nm):
+            proclist.append(req_stage(m_awvalid[i], m_arvalid[i], reqs[i]))
+        proclist.append(or_chain(reqs, any_req))
+        proclist.append(or_chain(sel_latched, sel_any))
+        proclist.append(grant_chain(active, owner, reqs, grants))
+        proclist.append(
+            select_chain(
+                grants,
+                list(range(nm)),
+                owner_next,
+                max(1, (nm - 1).bit_length()),
+                False,
+            )
+        )
+        proclist.append(select_chain(grants, m_awvalid, next_write, 0, True))
+        if is_full:
+            proclist.append(select_chain(grants, m_awid, next_awid, id_width, False))
+            proclist.append(select_chain(grants, m_arid, next_arid, id_width, False))
 
-        @always_comb
-        def grant_logic():
-            for i in range(nm):
-                grants[i].next = 0
-            if active:
-                for i in range(nm):
-                    if owner == i:
-                        grants[i].next = 1
-            else:
-                blocked = False
-                for i in range(nm):
-                    if reqs[i] and not blocked:
-                        grants[i].next = 1
-                        blocked = True
+        for j in range(ns):
+            proclist.append(
+                sel_latch(ctx.aclk, ctx.aresetn, active, selects[j], sel_latched[j])
+            )
 
         if is_full:
 
@@ -300,23 +227,15 @@ class AxiSharedBus(AxiInterconnectBase):
                     owner.next = 0
                     write_r.next = 0
                     orig_id.next = 0
-                    for j in range(ns):
-                        sel_latched[j].next = 0
                 elif not active:
-                    grant_i = -1
-                    for i in range(nm):
-                        if reqs[i] and grant_i < 0:
-                            grant_i = i
-                    if grant_i >= 0:
-                        owner.next = grant_i
+                    if any_req:
+                        owner.next = owner_next
                         active.next = 1
-                        write_r.next = m_awvalid[grant_i]
-                        if m_awvalid[grant_i]:
-                            orig_id.next = m_awid[grant_i]
+                        write_r.next = next_write
+                        if next_write:
+                            orig_id.next = next_awid
                         else:
-                            orig_id.next = m_arid[grant_i]
-                        for j in range(ns):
-                            sel_latched[j].next = selects[j]
+                            orig_id.next = next_arid
                 else:
                     done = s_bvalid and s_bready
                     if not done:
@@ -332,25 +251,19 @@ class AxiSharedBus(AxiInterconnectBase):
                     active.next = 0
                     owner.next = 0
                     write_r.next = 0
-                    for j in range(ns):
-                        sel_latched[j].next = 0
                 elif not active:
-                    grant_i = -1
-                    for i in range(nm):
-                        if reqs[i] and grant_i < 0:
-                            grant_i = i
-                    if grant_i >= 0:
-                        owner.next = grant_i
+                    if any_req:
+                        owner.next = owner_next
                         active.next = 1
-                        write_r.next = m_awvalid[grant_i]
-                        for j in range(ns):
-                            sel_latched[j].next = selects[j]
+                        write_r.next = next_write
                 else:
                     done = s_bvalid and s_bready
                     if not done:
                         done = s_rvalid and s_rready
                     if done:
                         active.next = 0
+
+        proclist.append(state)
 
         @always_comb
         def address_mux():
@@ -359,129 +272,86 @@ class AxiSharedBus(AxiInterconnectBase):
             else:
                 s_adr.next = s_adr_ar
 
-        @always_comb
-        def sel_any_logic():
-            sel_any.next = 0
-            for j in range(ns):
-                if sel_latched[j]:
-                    sel_any.next = 1
-
-        proclist = [dec, req_logic, grant_logic, state, address_mux, sel_any_logic]
+        proclist.append(address_mux)
 
         # master mux onto the shared bus
         for name in out_names:
+            bool_out, width = _kind(m_out[name][0])
             if is_full and name in ("awid", "arid"):
-                proclist.append(bus_mux_index(grants, s_out[name], nm))
+                proclist.append(
+                    select_chain(
+                        grants, list(range(nm)), s_out[name], id_width, False
+                    )
+                )
             else:
-                proclist.append(bus_mux(grants, m_out[name], s_out[name], nm))
+                proclist.append(
+                    select_chain(grants, m_out[name], s_out[name], width, bool_out)
+                )
 
         # broadcast to the slaves (valids gated by the address decode)
         for name in out_names:
-            if name in _GATED_OUT:
-                proclist.append(
-                    bus_fanout_gated(s_out[name], sl_in[name], sel_latched, ns)
-                )
-            else:
-                proclist.append(bus_fanout_plain(s_out[name], sl_in[name], ns))
+            for j in range(ns):
+                if name in _GATED_OUT:
+                    proclist.append(
+                        fanout_gated(s_out[name], sel_latched[j], sl_in[name][j])
+                    )
+                else:
+                    proclist.append(fanout_plain(s_out[name], sl_in[name][j]))
 
         # slave response mux back onto the shared bus
         for name in in_names:
+            bool_out, width = _kind(sl_out[name][0])
             if name in ("awready", "wready", "arready"):
+                sel_out = _clone(getattr(masters[0], name))
                 proclist.append(
-                    bus_resp_ready(sel_latched, sl_out[name], s_in[name], sel_any, ns)
+                    select_chain(sel_latched, sl_out[name], sel_out, width, bool_out)
                 )
-            elif name == "bvalid":
+                proclist.append(ready_default(sel_out, s_in[name], sel_any))
+            elif name in ("bvalid", "bresp"):
+                sel_out = _clone(getattr(masters[0], name))
                 proclist.append(
-                    bus_resp_write(
-                        sel_latched,
-                        sl_out[name],
-                        s_in[name],
-                        sel_any,
-                        active,
-                        write_r,
-                        1,
-                        ns,
+                    select_chain(sel_latched, sl_out[name], sel_out, width, bool_out)
+                )
+                default = 1 if name == "bvalid" else RESP_DECERR
+                proclist.append(
+                    resp_default(
+                        sel_out, s_in[name], active, sel_any, write_r, True, default
                     )
                 )
-            elif name == "bresp":
+            elif name in ("rvalid", "rresp", "rlast"):
+                sel_out = _clone(getattr(masters[0], name))
                 proclist.append(
-                    bus_resp_write(
-                        sel_latched,
-                        sl_out[name],
-                        s_in[name],
-                        sel_any,
-                        active,
-                        write_r,
-                        RESP_DECERR,
-                        ns,
-                    )
+                    select_chain(sel_latched, sl_out[name], sel_out, width, bool_out)
                 )
-            elif name == "rvalid":
+                default = 1 if name in ("rvalid", "rlast") else RESP_DECERR
                 proclist.append(
-                    bus_resp_read(
-                        sel_latched,
-                        sl_out[name],
-                        s_in[name],
-                        sel_any,
-                        active,
-                        write_r,
-                        1,
-                        ns,
-                    )
-                )
-            elif name == "rresp":
-                proclist.append(
-                    bus_resp_read(
-                        sel_latched,
-                        sl_out[name],
-                        s_in[name],
-                        sel_any,
-                        active,
-                        write_r,
-                        RESP_DECERR,
-                        ns,
-                    )
-                )
-            elif name == "rlast":
-                proclist.append(
-                    bus_resp_read(
-                        sel_latched,
-                        sl_out[name],
-                        s_in[name],
-                        sel_any,
-                        active,
-                        write_r,
-                        1,
-                        ns,
+                    resp_default(
+                        sel_out, s_in[name], active, sel_any, write_r, False, default
                     )
                 )
             else:
-                proclist.append(bus_resp_mux(sel_latched, sl_out[name], s_in[name], ns))
+                proclist.append(
+                    select_chain(sel_latched, sl_out[name], s_in[name], width, bool_out)
+                )
 
         # route the shared response back to the masters
         for name in in_names:
-            if name == "bid":
-                proclist.append(
-                    bus_mresp_id(
-                        s_in[name], m_in[name], grants, orig_id, write_r, True, nm
+            for i in range(nm):
+                if name == "bid":
+                    proclist.append(
+                        mresp_id(
+                            s_in[name], grants[i], orig_id, write_r, 1, m_in[name][i]
+                        )
                     )
-                )
-            elif name == "rid":
-                proclist.append(
-                    bus_mresp_id(
-                        s_in[name], m_in[name], grants, orig_id, write_r, False, nm
+                elif name == "rid":
+                    proclist.append(
+                        mresp_id(
+                            s_in[name], grants[i], orig_id, write_r, 0, m_in[name][i]
+                        )
                     )
-                )
-            elif name in _GATED_IN:
-                proclist.append(bus_mresp_gated(s_in[name], m_in[name], grants, nm))
-            else:
-                proclist.append(bus_mresp_plain(s_in[name], m_in[name], nm))
-
-        if ctx.trace.enabled:
-            proclist.append(
-                check_no_contention(
-                    ctx.aclk, ctx.aresetn, grants, label="shared_bus", trace=ctx.trace
-                )
-            )
+                elif name in _GATED_IN:
+                    proclist.append(mresp_gated(s_in[name], grants[i], m_in[name][i]))
+                else:
+                    proclist.append(mresp_plain(s_in[name], m_in[name][i]))
 
         return proclist

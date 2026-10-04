@@ -14,62 +14,13 @@ stages** over individual signals instead.
 
 from myhdl import Signal, always_comb, block, intbv
 
+from ...bus_common.muxing import select_chain
 from ..arbiter import ArbiterBase, FixedPriorityArbiter
 from ..checks import WishboneConfigError
 from ..decoder import address_decoder
 from .base import InterconnectBase, InterconnectContext
 
 __all__ = ["SharedBus"]
-
-
-@block
-def onehot_first(grant, value, out):
-    """First stage of a one-hot select chain: ``out = value if grant else 0``."""
-
-    @always_comb
-    def p():
-        if grant:
-            out.next = value
-        else:
-            out.next = 0
-
-    return p
-
-
-@block
-def onehot_stage(grant, value, acc, out):
-    """Later stage: ``out = value if grant else acc`` (selects are one-hot)."""
-
-    @always_comb
-    def p():
-        if grant:
-            out.next = value
-        else:
-            out.next = acc
-
-    return p
-
-
-@block
-def select_chain(grants, values, out, width, bool_out):
-    """Elaboration-built priority chain selecting ``values`` by one-hot ``grants``.
-
-    ``width`` is used for the intermediate signals when ``bool_out`` is false.
-    """
-    procs = []
-    acc = None
-    n = len(values)
-    for i in range(n):
-        if i == n - 1:
-            dst = out
-        else:
-            dst = Signal(bool(0)) if bool_out else Signal(intbv(0)[width:])
-        if i == 0:
-            procs.append(onehot_first(grants[i], values[i], dst))
-        else:
-            procs.append(onehot_stage(grants[i], values[i], acc, dst))
-        acc = dst
-    return procs
 
 
 @block
