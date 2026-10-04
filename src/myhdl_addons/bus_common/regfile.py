@@ -123,7 +123,9 @@ def engine_cell(clk, rst, reset_active, req, we, addr, offset, d, q, init):
 
 
 @block
-def engine_cell_w1c(clk, rst, reset_active, req, we, addr, offset, q, wdata, full, init):
+def engine_cell_w1c(
+    clk, rst, reset_active, req, we, addr, offset, q, wdata, full, init
+):
     """Write-1-to-clear cell: ``q & (wdata ^ full)`` computed at the edge."""
 
     if reset_active is None:
@@ -148,7 +150,19 @@ def engine_cell_w1c(clk, rst, reset_active, req, we, addr, offset, q, wdata, ful
 
 @block
 def engine_cell_wstrb(
-    clk, rst, reset_active, req, we, addr, offset, q, wdata, wstrb, mask_rom, keep_rom, init
+    clk,
+    rst,
+    reset_active,
+    req,
+    we,
+    addr,
+    offset,
+    q,
+    wdata,
+    wstrb,
+    mask_rom,
+    keep_rom,
+    init,
 ):
     """Byte-strobe cell: merge ``wdata``/``q`` per lane at the edge.
 
@@ -386,22 +400,50 @@ class RegisterEngine:
                 if reg.w1c:
                     proclist.append(
                         engine_cell_w1c(
-                            clk, rst, reset_active, req, we, addr, reg.offset, cell,
-                            wdata, full, reg.reset,
+                            clk,
+                            rst,
+                            reset_active,
+                            req,
+                            we,
+                            addr,
+                            reg.offset,
+                            cell,
+                            wdata,
+                            full,
+                            reg.reset,
                         )
                     )
                 elif wstrb is not None:
                     proclist.append(
                         engine_cell_wstrb(
-                            clk, rst, reset_active, req, we, addr, reg.offset, cell,
-                            wdata, wstrb, mask_rom, keep_rom, reg.reset,
+                            clk,
+                            rst,
+                            reset_active,
+                            req,
+                            we,
+                            addr,
+                            reg.offset,
+                            cell,
+                            wdata,
+                            wstrb,
+                            mask_rom,
+                            keep_rom,
+                            reg.reset,
                         )
                     )
                 else:
                     proclist.append(
                         engine_cell(
-                            clk, rst, reset_active, req, we, addr, reg.offset, wdata,
-                            cell, reg.reset,
+                            clk,
+                            rst,
+                            reset_active,
+                            req,
+                            we,
+                            addr,
+                            reg.offset,
+                            wdata,
+                            cell,
+                            reg.reset,
                         )
                     )
                 proclist.append(engine_strobe(req, we, matches[i], rd[i], wr[i], True))
