@@ -27,9 +27,9 @@ names (e.g. `Alu(ops=["ADD", "SUB"])`).
 ```python
 from myhdl_addons.components import Mux
 
-mux = Mux(width=8, n=4)          # validated configuration
-ports = mux.ports()              # named signals: sel, inputs, y
-dut = mux.hdl(ports)             # MyHDL instances; simulate or instantiate
+mux = Mux(width=8, n=4)  # validated configuration
+ports = mux.ports()  # named signals: sel, inputs, y
+dut = mux.hdl(ports)  # MyHDL instances; simulate or instantiate
 ```
 
 `AVAIL_*` constants (`AVAIL_OPS`, `AVAIL_FLAGS`, `AVAIL_OUTPUTS`, `MODES`,
@@ -150,7 +150,7 @@ port; sequential components use active-low `resetn`.
 from myhdl_addons.components import AddressDecoder
 
 dec = AddressDecoder(adr_width=16, windows=[(0x0000, 0x100), (0x1000, 0x100)])
-ports = dec.ports()          # adr, sel0, sel1
+ports = dec.ports()  # adr, sel0, sel1
 ```
 
 ---
