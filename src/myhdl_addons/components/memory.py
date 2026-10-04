@@ -10,7 +10,7 @@ The storage and read/write helpers are shared with
 ``rf_capture``/``rf_wr_port``/…), so both memories stay convertible.
 """
 
-from myhdl import Signal, block, intbv
+from myhdl import ResetSignal, Signal, block, intbv
 
 from ..common.config import (
     ComponentBase,
@@ -24,6 +24,7 @@ from ..common.config import (
     mask,
 )
 from ..common.errors import HdlConfigError
+from ..common.reset import make_reset
 from ..common.views import SignalView
 from .regfile import (
     NO_CHANGE,
@@ -79,6 +80,7 @@ class SyncRam(ComponentBase):
         byte_write: int = 0,
         init=None,
         output_register: bool = False,
+        reset_signal: ResetSignal | None = None,
     ) -> None:
         p_width = check_positive(width, "width")
         p_depth = check_positive(depth, "depth")
@@ -99,6 +101,7 @@ class SyncRam(ComponentBase):
             "init": _check_init(init, p_depth, required=False),
             "output_register": check_bool(output_register, "output_register"),
             "addr_bits": max(1, ceil_log2(p_depth)),
+            "reset_signal": make_reset(reset_signal),
         }
 
     def ports(self) -> SignalView:
@@ -108,7 +111,7 @@ class SyncRam(ComponentBase):
         write_ports = self._params["write_ports"]
         read_ports = self._params["read_ports"]
         lanes = width // 8
-        sig = {"clk": Signal(bool(0)), "resetn": Signal(bool(0))}
+        sig = {"clk": Signal(bool(0)), "reset": self._params["reset_signal"]}
         for p in range(write_ports):
             sig[f"we{p}"] = Signal(bool(0))
             sig[f"waddr{p}"] = Signal(intbv(0, min=0, max=1 << addr_bits))
@@ -174,7 +177,7 @@ class SyncRam(ComponentBase):
                 rf_wr_port(
                     mem,
                     ports.clk,
-                    ports.resetn,
+                    ports.reset,
                     ports[f"we{p}"],
                     ports[f"waddr{p}"],
                     wvalue[p],
@@ -216,19 +219,19 @@ class SyncRam(ComponentBase):
             if stages == 1:
                 proclist.append(
                     rf_capture(
-                        src, rdata[p], ports.clk, ports.resetn, True, no_change, blocked
+                        src, rdata[p], ports.clk, ports.reset, True, no_change, blocked
                     )
                 )
             else:
                 stage = Signal(intbv(0)[width:])
                 proclist.append(
                     rf_capture(
-                        src, stage, ports.clk, ports.resetn, True, no_change, blocked
+                        src, stage, ports.clk, ports.reset, True, no_change, blocked
                     )
                 )
                 proclist.append(
                     rf_capture(
-                        stage, rdata[p], ports.clk, ports.resetn, True, False, None
+                        stage, rdata[p], ports.clk, ports.reset, True, False, None
                     )
                 )
 
@@ -254,6 +257,7 @@ class SyncRom(ComponentBase):
         read_latency: int = 1,
         read_ports: int = 1,
         output_register: bool = False,
+        reset_signal: ResetSignal | None = None,
     ) -> None:
         p_width = check_positive(width, "width")
         p_depth = check_positive(depth, "depth")
@@ -265,13 +269,14 @@ class SyncRom(ComponentBase):
             "read_ports": check_positive(read_ports, "read_ports"),
             "output_register": check_bool(output_register, "output_register"),
             "addr_bits": max(1, ceil_log2(p_depth)),
+            "reset_signal": make_reset(reset_signal),
         }
 
     def ports(self) -> SignalView:
         """Allocate and return the component interface."""
         width = self._params["width"]
         addr_bits = self._params["addr_bits"]
-        sig = {"clk": Signal(bool(0)), "resetn": Signal(bool(0))}
+        sig = {"clk": Signal(bool(0)), "reset": self._params["reset_signal"]}
         for p in range(self._params["read_ports"]):
             sig[f"raddr{p}"] = Signal(intbv(0, min=0, max=1 << addr_bits))
             sig[f"rdata{p}"] = Signal(intbv(0)[width:])
@@ -306,7 +311,7 @@ class SyncRom(ComponentBase):
                         base,
                         rdata,
                         ports.clk,
-                        ports.resetn,
+                        ports.reset,
                         True,
                         False,
                         None,
@@ -319,7 +324,7 @@ class SyncRom(ComponentBase):
                         base,
                         stage,
                         ports.clk,
-                        ports.resetn,
+                        ports.reset,
                         True,
                         False,
                         None,
@@ -330,7 +335,7 @@ class SyncRom(ComponentBase):
                         stage,
                         rdata,
                         ports.clk,
-                        ports.resetn,
+                        ports.reset,
                         True,
                         False,
                         None,

@@ -21,6 +21,7 @@ from ..common.config import (
     check_positive,
     mask,
 )
+from ..common.reset import make_reset
 from ..common.views import SignalView
 from .mux_tree import build_mux_tree
 
@@ -37,7 +38,7 @@ def _common_params(width, n, valid, registered, en, reset_value, reset_signal) -
         "registered": bool(registered),
         "en": bool(en),
         "reset_value": check_non_negative(reset_value, "reset_value") & mask(p_width),
-        "reset_signal": reset_signal if isinstance(reset_signal, ResetSignal) else None,
+        "reset_signal": make_reset(reset_signal),
     }
 
 
@@ -50,8 +51,6 @@ def _common_signals(params: dict) -> dict:
         sig["valid"] = Signal(bool(0))
     if params["registered"]:
         sig["clk"] = Signal(bool(0))
-        if params["reset_signal"] is None:
-            params["reset_signal"] = ResetSignal(0, active=0, isasync=False)
         sig["reset"] = params["reset_signal"]
         if params["en"]:
             sig["en"] = Signal(bool(0))
@@ -59,36 +58,60 @@ def _common_signals(params: dict) -> dict:
 
 
 def _register_common(ports, params: dict):
-    """Return ``en_sig`` for the registered stage (``Signal(1)`` when no ``en``)."""
-    return ports.en if params["en"] else Signal(bool(1))
+    """Return the registered-stage enable, or ``None`` when ``en`` is disabled."""
+    return ports.en if params["en"] else None
 
 
 @block
 def _reg(d, q, clk, reset, en, reset_value):
-    """Registered stage (multi-bit): reset > en-hold > capture."""
+    """Registered stage (multi-bit): synchronous reset > en-hold > capture."""
 
-    @always(clk.posedge)
-    def logic():
-        if not reset:
-            if en:
+    active = int(reset.active)
+
+    if en is None:
+
+        @always(clk.posedge)
+        def logic():
+            if reset == active:
+                q.next = reset_value
+            else:
                 q.next = d
-        else:
-            q.next = reset_value
+
+    else:
+
+        @always(clk.posedge)
+        def logic():
+            if reset == active:
+                q.next = reset_value
+            elif en:
+                q.next = d
 
     return logic
 
 
 @block
 def _bool_reg(d, q, clk, reset, en):
-    """Registered stage (single bit): reset > en-hold > capture."""
+    """Registered stage (single bit): synchronous reset > en-hold > capture."""
 
-    @always(clk.posedge)
-    def logic():
-        if not reset:
-            if en:
+    active = int(reset.active)
+
+    if en is None:
+
+        @always(clk.posedge)
+        def logic():
+            if reset == active:
+                q.next = False
+            else:
                 q.next = d
-        else:
-            q.next = False
+
+    else:
+
+        @always(clk.posedge)
+        def logic():
+            if reset == active:
+                q.next = False
+            elif en:
+                q.next = d
 
     return logic
 
@@ -270,9 +293,7 @@ class OneHotMux(ComponentBase):
         cur = 0
         for i in range(n):
             dst = y_dst if i == n - 1 else Signal(intbv(0)[width:])
-            proclist.append(
-                onehot_stage(sel, i, i == 0, cur, ports[f"in{i}"], dst)
-            )
+            proclist.append(onehot_stage(sel, i, i == 0, cur, ports[f"in{i}"], dst))
             cur = dst
 
         if valid:

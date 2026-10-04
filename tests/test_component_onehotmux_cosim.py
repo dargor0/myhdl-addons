@@ -5,7 +5,6 @@ Python block or the converted Verilog RTL; both must agree.
 """
 
 import pytest
-
 from test_component_onehotmux_select import _python_device, _run
 
 

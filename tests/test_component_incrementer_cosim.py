@@ -5,7 +5,6 @@ block or the converted Verilog RTL; both must agree.
 """
 
 import pytest
-
 from test_component_incrementer_steps import _run
 
 

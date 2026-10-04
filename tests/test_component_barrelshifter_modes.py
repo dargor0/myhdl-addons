@@ -7,7 +7,13 @@ from myhdl_addons.components import ROL, ROR, SLL, SRA, SRL, BarrelShifter
 
 
 @block
+def _python_device(shifter, ports):
+    return shifter.hdl(ports)
+
+
+@block
 def _shift_tb(
+    make_device,
     results,
     width,
     data,
@@ -28,11 +34,18 @@ def _shift_tb(
         shamt_const=shamt_const,
     )
     ports = shifter.ports()
-    dut = shifter.hdl(ports)
+    dut = make_device(shifter, ports)
     shamt_sig = ports.signals.get("shamt")
 
     @instance
     def stim():
+        # Kick the converted logic with a known-different state first (cosim
+        # does not re-evaluate when no input changes).
+        ports.data.next = 0
+        ports.mode.next = mode
+        if shamt_sig is not None:
+            shamt_sig.next = 0
+        yield delay(1)
         ports.data.next = data
         ports.mode.next = mode
         if shamt_sig is not None:
@@ -44,9 +57,9 @@ def _shift_tb(
     return dut, stim
 
 
-def _run(width, data, shamt, mode, **kwargs):
+def _run(width, data, shamt, mode, make_device=_python_device, **kwargs):
     results = []
-    _shift_tb(results, width, data, shamt, mode, **kwargs).run_sim()
+    _shift_tb(make_device, results, width, data, shamt, mode, **kwargs).run_sim()
     return results[0]
 
 
@@ -95,7 +108,9 @@ def test_shamt_const_omits_port():
     ports = shifter.ports()
     assert "shamt" not in ports.names
     results = []
-    _shift_tb(results, 8, 0x01, 0, SLL, shamt_const=2, modes=["SLL"]).run_sim()
+    _shift_tb(
+        _python_device, results, 8, 0x01, 0, SLL, shamt_const=2, modes=["SLL"]
+    ).run_sim()
     assert results[0] == 0x04
 
 

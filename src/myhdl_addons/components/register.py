@@ -10,7 +10,7 @@ feeding one ``@always(clk.posedge)`` register process; disabled controls simply
 omit their stage.
 """
 
-from myhdl import Signal, always, always_comb, block, intbv
+from myhdl import ResetSignal, Signal, always, always_comb, block, intbv
 
 from ..common.config import (
     ComponentBase,
@@ -20,6 +20,7 @@ from ..common.config import (
     mask,
 )
 from ..common.errors import HdlConfigError
+from ..common.reset import make_reset
 from ..common.views import SignalView
 
 __all__ = ["Register"]
@@ -93,14 +94,15 @@ def ctrl_mux(ctrl, din, value, y):
 
 
 @block
-def reg_field(clk, resetn, d, q, reset_enable, reset_value):
-    """Field register: synchronous capture with optional active-low reset."""
+def reg_field(clk, reset, d, q, reset_enable, reset_value):
+    """Field register: synchronous capture with optional reset."""
 
     if reset_enable:
+        active = int(reset.active)
 
         @always(clk.posedge)
         def p():
-            if not resetn:
+            if reset == active:
                 q.next = reset_value
             else:
                 q.next = d
@@ -122,7 +124,7 @@ class Register(ComponentBase):
         en: include a write-enable (hold when low).
         flush: include a flush input (force to ``flush_values``).
         load: include a load input (force to ``load_values``).
-        reset_enable: reset the fields on active-low ``resetn``.
+        reset_enable: reset the fields on the ``reset`` port.
         reset_values, flush_values, load_values: per-field value dicts.
         init: optional per-field simulation initial values.
     """
@@ -138,6 +140,7 @@ class Register(ComponentBase):
         flush_values=None,
         load_values=None,
         init=None,
+        reset_signal: ResetSignal | None = None,
     ) -> None:
         p_fields = _check_fields(fields)
         names = {name for name, _ in p_fields}
@@ -151,6 +154,7 @@ class Register(ComponentBase):
             "flush_values": _check_values(flush_values, names, "flush_values"),
             "load_values": _check_values(load_values, names, "load_values"),
             "init": _check_values(init, names, "init"),
+            "reset_signal": make_reset(reset_signal),
         }
 
     def _initial(self, name: str, width: int) -> int:
@@ -161,7 +165,9 @@ class Register(ComponentBase):
 
     def ports(self) -> SignalView:
         """Allocate and return the component interface."""
-        sig = {"clk": Signal(bool(0)), "resetn": Signal(bool(0))}
+        sig = {"clk": Signal(bool(0))}
+        if self._params["reset_enable"]:
+            sig["reset"] = self._params["reset_signal"]
         for name, width in self._params["fields"]:
             sig[f"d_{name}"] = Signal(intbv(0)[width:])
             sig[f"q_{name}"] = Signal(intbv(self._initial(name, width))[width:])
@@ -183,6 +189,7 @@ class Register(ComponentBase):
         reset_values = self._params["reset_values"]
         flush_values = self._params["flush_values"]
         load_values = self._params["load_values"]
+        reset = ports.reset if reset_enable else None
 
         proclist = []
         for name, width in self._params["fields"]:
@@ -209,7 +216,7 @@ class Register(ComponentBase):
             proclist.append(
                 reg_field(
                     ports.clk,
-                    ports.resetn,
+                    reset,
                     cur,
                     q,
                     reset_enable,

@@ -14,7 +14,6 @@ output stage reuses the same priority as the rest of the library.
 from myhdl import (
     ResetSignal,
     Signal,
-    SignalType,
     always,
     always_comb,
     block,
@@ -33,7 +32,9 @@ from ..common.config import (
     mask,
     normalize_subset,
 )
+from ..common.reset import make_reset
 from ..common.views import SignalView
+from .mux_tree import build_mux_tree
 
 __all__ = [
     "MODES",
@@ -84,15 +85,30 @@ def slice_ext(src, dst, width):
 
 @block
 def reg_stage(d, q, clk, reset, en, reset_value):
-    """Registered output stage: reset > en-hold > capture."""
+    """Registered output stage: synchronous reset > en-hold > capture.
 
-    @always(clk.posedge)
-    def logic():
-        if not reset:
-            if en:
+    The reset polarity follows ``reset.active``; ``en is None`` builds a stage
+    with no enable, so no undriven constant-enable signal is emitted.
+    """
+    active = int(reset.active)
+
+    if en is None:
+
+        @always(clk.posedge)
+        def logic():
+            if reset == active:
+                q.next = reset_value
+            else:
                 q.next = d
-        else:
-            q.next = reset_value
+
+    else:
+
+        @always(clk.posedge)
+        def logic():
+            if reset == active:
+                q.next = reset_value
+            elif en:
+                q.next = d
 
     return logic
 
@@ -323,7 +339,6 @@ class BarrelShifter(ComponentBase):
         p_registered = check_registered(registered)
         p_en = check_bool(en, "en")
         p_reset_value = check_non_negative(reset_value, "reset_value") & mask(p_width)
-        p_reset_signal = reset_signal if isinstance(reset_signal, ResetSignal) else None
         if shamt_const is not None:
             p_shamt_const = check_non_negative(shamt_const, "shamt_const")
         else:
@@ -341,7 +356,7 @@ class BarrelShifter(ComponentBase):
             "registered": p_registered,
             "en": p_en,
             "reset_value": p_reset_value,
-            "reset_signal": p_reset_signal,
+            "reset_signal": make_reset(reset_signal),
             "shamt_const": p_shamt_const,
             "shamt_bits": p_shamt_bits,
             "shamt_mode": p_shamt_mode,
@@ -370,8 +385,6 @@ class BarrelShifter(ComponentBase):
             sig["shamt"] = Signal(intbv(0, min=0, max=1 << self.shamt_width))
         if self._params["registered"]:
             sig["clk"] = Signal(bool(0))
-            if self._params["reset_signal"] is None:
-                self._params["reset_signal"] = ResetSignal(0, active=0, isasync=False)
             sig["reset"] = self._params["reset_signal"]
             if self._params["en"]:
                 sig["en"] = Signal(bool(0))
@@ -499,38 +512,18 @@ class BarrelShifter(ComponentBase):
             parts.append((mode, source))
 
         # --- mode select (canonical codes; disabled/unknown modes read 0) ---
+        # ``ports.mode`` is 3 bits, so pad the 5 canonical codes to 8 leaves;
+        # codes 5..7 and disabled modes resolve to constant 0.
         y_dst = ports.y if not registered else Signal(intbv(0)[width:])
         sources = {SLL: 0, SRL: 0, SRA: 0, ROL: 0, ROR: 0}
-        part_list = []
         for mode, source in parts:
             sources[mode] = source
-            if isinstance(source, SignalType):
-                part_list.append(source)
-        sll_src = sources[SLL]
-        srl_src = sources[SRL]
-        sra_src = sources[SRA]
-        rol_src = sources[ROL]
-        ror_src = sources[ROR]
-
-        @always(ports.mode, *part_list)
-        def mode_mux():
-            if int(ports.mode) == SLL:
-                y_dst.next = sll_src
-            elif int(ports.mode) == SRL:
-                y_dst.next = srl_src
-            elif int(ports.mode) == SRA:
-                y_dst.next = sra_src
-            elif int(ports.mode) == ROL:
-                y_dst.next = rol_src
-            elif int(ports.mode) == ROR:
-                y_dst.next = ror_src
-            else:
-                y_dst.next = 0
-
-        proclist.append(mode_mux)
+        leaves = [sources[SLL], sources[SRL], sources[SRA], sources[ROL], sources[ROR]]
+        leaves += [0] * (8 - len(leaves))
+        proclist.append(build_mux_tree(ports.mode, leaves, y_dst, 3, width))
 
         if registered:
-            en_sig = ports.en if self._params["en"] else Signal(bool(1))
+            en_sig = ports.en if self._params["en"] else None
             proclist.append(
                 reg_stage(
                     y_dst,

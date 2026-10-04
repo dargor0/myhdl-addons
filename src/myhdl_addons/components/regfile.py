@@ -9,7 +9,7 @@ free variable (MyHDL memory inference), written by one clocked process and read
 by per-port processes; the byte-strobe merge is a chain of small lane muxes.
 """
 
-from myhdl import Signal, always, always_comb, block, intbv
+from myhdl import ResetSignal, Signal, always, always_comb, block, intbv
 
 from ..common.config import (
     ComponentBase,
@@ -22,6 +22,7 @@ from ..common.config import (
     mask,
 )
 from ..common.errors import HdlConfigError
+from ..common.reset import make_reset
 from ..common.views import SignalView
 
 __all__ = [
@@ -95,15 +96,16 @@ def rf_blocked(raddr, we, waddr, blocked, nwrite):
 
 
 @block
-def rf_capture(d, q, clk, resetn, reset_enable, hold, blocked):
+def rf_capture(d, q, clk, reset, reset_enable, hold, blocked):
     """Registered read capture: ``reset > hold-on-same-address-write > d``."""
 
     if reset_enable:
+        active = int(reset.active)
         if hold:
 
             @always(clk.posedge)
             def p():
-                if not resetn:
+                if reset == active:
                     q.next = 0
                 else:
                     if not blocked:
@@ -113,7 +115,7 @@ def rf_capture(d, q, clk, resetn, reset_enable, hold, blocked):
 
             @always(clk.posedge)
             def p():
-                if not resetn:
+                if reset == active:
                     q.next = 0
                 else:
                     q.next = d
@@ -137,7 +139,7 @@ def rf_capture(d, q, clk, resetn, reset_enable, hold, blocked):
 
 @block
 def rf_wr_port(
-    mem, clk, resetn, we, waddr, wvalue, depth, reset_enable, reset_value, zero_reg
+    mem, clk, reset, we, waddr, wvalue, depth, reset_enable, reset_value, zero_reg
 ):
     """Synchronous writes for one port, with optional reset and zero-register.
 
@@ -147,11 +149,12 @@ def rf_wr_port(
     """
 
     if reset_enable:
+        active = int(reset.active)
         if zero_reg:
 
             @always(clk.posedge)
             def p():
-                if not resetn:
+                if reset == active:
                     for i in range(depth):
                         mem[i].next = reset_value
                 else:
@@ -162,7 +165,7 @@ def rf_wr_port(
 
             @always(clk.posedge)
             def p():
-                if not resetn:
+                if reset == active:
                     for i in range(depth):
                         mem[i].next = reset_value
                 else:
@@ -245,6 +248,7 @@ class RegisterFile(ComponentBase):
         reset_value: int = 0,
         init=None,
         byte_write: bool = False,
+        reset_signal: ResetSignal | None = None,
     ) -> None:
         p_width = check_positive(width, "width")
         p_depth = check_positive(depth, "depth")
@@ -283,6 +287,7 @@ class RegisterFile(ComponentBase):
             "init": p_init,
             "byte_write": p_byte_write,
             "addr_bits": max(1, ceil_log2(p_depth)),
+            "reset_signal": make_reset(reset_signal),
         }
 
     def _initial(self, index: int) -> int:
@@ -297,7 +302,7 @@ class RegisterFile(ComponentBase):
         write_ports = self._params["write_ports"]
         read_ports = self._params["read_ports"]
         lanes = width // 8
-        sig = {"clk": Signal(bool(0)), "resetn": Signal(bool(0))}
+        sig = {"clk": Signal(bool(0)), "reset": self._params["reset_signal"]}
         for p in range(write_ports):
             sig[f"we{p}"] = Signal(bool(0))
             sig[f"waddr{p}"] = Signal(intbv(0, min=0, max=1 << addr_bits))
@@ -368,7 +373,7 @@ class RegisterFile(ComponentBase):
                 rf_wr_port(
                     mem,
                     ports.clk,
-                    ports.resetn,
+                    ports.reset,
                     ports[f"we{p}"],
                     ports[f"waddr{p}"],
                     wvalue[p],
@@ -415,7 +420,7 @@ class RegisterFile(ComponentBase):
                         src,
                         rdata[p],
                         ports.clk,
-                        ports.resetn,
+                        ports.reset,
                         reset_enable,
                         no_change,
                         blocked,

@@ -22,6 +22,7 @@ from ..common.config import (
     mask,
 )
 from ..common.errors import HdlConfigError
+from ..common.reset import make_reset
 from ..common.views import SignalView
 
 __all__ = ["AddressDecoder"]
@@ -91,35 +92,53 @@ def ad_match(adr, base, end, en, dst, has_en):
 
 
 @block
-def ad_valid(selects, valid, n):
-    """``valid`` is asserted while any select is asserted."""
+def ad_or_stage(src, acc, dst, first):
+    """One OR-reduce stage; ``first`` seeds from ``src`` (no accumulator)."""
 
-    # NOTE: always_comb does not see signals hidden in a tuple; use an explicit
-    # sensitivity list (as OneHotMux does).
-    @always(*selects)
-    def p():
-        any_sel = 0
-        for i in range(n):
-            if selects[i]:
-                any_sel = 1
-        if any_sel:
-            valid.next = 1
-        else:
-            valid.next = 0
+    if first:
+
+        @always_comb
+        def p():
+            dst.next = src
+
+    else:
+
+        @always_comb
+        def p():
+            dst.next = src | acc
 
     return p
 
 
 @block
+def ad_valid(selects, valid, n):
+    """``valid`` is asserted while any select is asserted.
+
+    A tuple/list cannot be indexed by a loop variable in the convertible
+    subset (MyHDL emits ``selects[i]`` verbatim), so ``valid`` is an
+    elaboration-built OR-reduce chain over the individual select signals.
+    """
+
+    proclist = []
+    cur = 0
+    for i in range(n):
+        dst = valid if i == n - 1 else Signal(bool(0))
+        proclist.append(ad_or_stage(selects[i], cur, dst, i == 0))
+        cur = dst
+    return proclist
+
+
+@block
 def ad_bool_reg(d, q, clk, reset, reset_val):
-    """Registered select/valid stage (resets to the constant ``reset_val``)."""
+    """Registered select/valid stage (synchronous reset to ``reset_val``)."""
+    active = int(reset.active)
 
     @always(clk.posedge)
     def p():
-        if not reset:
-            q.next = d
-        else:
+        if reset == active:
             q.next = reset_val
+        else:
+            q.next = d
 
     return p
 
@@ -158,9 +177,7 @@ class AddressDecoder(ComponentBase):
             "registered": check_registered(registered),
             "reset_value": check_non_negative(reset_value, "reset_value")
             & mask(len(p_windows)),
-            "reset_signal": reset_signal
-            if isinstance(reset_signal, ResetSignal)
-            else None,
+            "reset_signal": make_reset(reset_signal),
         }
 
     @property
@@ -186,8 +203,6 @@ class AddressDecoder(ComponentBase):
             sig["valid"] = Signal(bool(0))
         if self._params["registered"]:
             sig["clk"] = Signal(bool(0))
-            if self._params["reset_signal"] is None:
-                self._params["reset_signal"] = ResetSignal(0, active=0, isasync=False)
             sig["reset"] = self._params["reset_signal"]
         return SignalView(**sig)
 

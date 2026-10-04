@@ -33,12 +33,12 @@ def _reg_tb(results):
 
     @instance
     def stim():
-        ports.reset.next = 1  # assert reset
+        ports.reset.next = 0  # assert reset
         ports.mode.next = SLL
         yield ports.clk.posedge
         yield delay(1)
         results.append(int(ports.y))
-        ports.reset.next = 0  # release
+        ports.reset.next = 1  # release
         ports.en.next = 1
         ports.data.next = 0x01
         ports.shamt.next = 3

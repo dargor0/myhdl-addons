@@ -17,6 +17,7 @@ from ..common.config import (
     check_positive,
     normalize_subset,
 )
+from ..common.reset import make_reset
 from ..common.views import SignalView
 
 __all__ = ["AVAIL_OUTPUTS", "Comparator"]
@@ -58,9 +59,7 @@ class Comparator(ComponentBase):
             "registered": bool(registered),
             "en": bool(en),
             "reset_value": reset_value,
-            "reset_signal": reset_signal
-            if isinstance(reset_signal, ResetSignal)
-            else None,
+            "reset_signal": make_reset(reset_signal),
         }
 
     def ports(self) -> SignalView:
@@ -73,9 +72,7 @@ class Comparator(ComponentBase):
             sig[name] = Signal(bool(0))
         if self._params["registered"]:
             sig["clk"] = Signal(bool(0))
-            if self._params["reset_signal"] is None:
-                self._params["reset_signal"] = ResetSignal(0, active=0, isasync=False)
-                sig["reset"] = self._params["reset_signal"]
+            sig["reset"] = self._params["reset_signal"]
             if self._params["en"]:
                 sig["en"] = Signal(bool(0))
         return SignalView(**sig)
@@ -209,7 +206,7 @@ class Comparator(ComponentBase):
             proclist.append(le_proc)
 
         if registered:
-            en_sig = ports.en if self._params["en"] else Signal(bool(1))
+            en_sig = ports.en if self._params["en"] else None
             for name in outputs:
                 proclist.append(
                     _bool_reg(ports[name], dst[name], ports.clk, ports.reset, en_sig)
@@ -220,14 +217,29 @@ class Comparator(ComponentBase):
 
 @block
 def _bool_reg(q, d, clk, reset, en):
-    """Single-bit registered stage with reset > en-hold > capture priority."""
+    """Single-bit registered stage: synchronous reset > en-hold > capture.
 
-    @always(clk.posedge)
-    def logic():
-        if not reset:
-            if en:
+    The reset polarity follows ``reset.active``; ``en is None`` builds a stage
+    with no enable.
+    """
+    active = int(reset.active)
+
+    if en is None:
+
+        @always(clk.posedge)
+        def logic():
+            if reset == active:
+                q.next = False
+            else:
                 q.next = d
-        else:
-            q.next = False
+
+    else:
+
+        @always(clk.posedge)
+        def logic():
+            if reset == active:
+                q.next = False
+            elif en:
+                q.next = d
 
     return logic

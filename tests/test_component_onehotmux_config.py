@@ -42,12 +42,12 @@ def _reg_tb(results):
         ports.in0.next = 0xAA
         ports.in1.next = 0xBB
         ports.sel.next = 0b01
-        ports.reset.next = 1  # assert reset
+        ports.reset.next = 0  # assert reset
         ports.en.next = 1
         yield ports.clk.posedge
         yield delay(1)
         results.append((int(ports.y), int(ports.valid)))
-        ports.reset.next = 0  # release
+        ports.reset.next = 1  # release
         yield ports.clk.posedge
         yield delay(1)
         results.append((int(ports.y), int(ports.valid)))

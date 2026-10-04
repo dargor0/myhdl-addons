@@ -21,6 +21,7 @@ from ..common.config import (
     check_registered,
     mask,
 )
+from ..common.reset import make_reset
 from ..common.views import SignalView
 
 __all__ = ["PRIORITIES", "Decoder", "PriorityEncoder"]
@@ -47,28 +48,30 @@ def decode_stage(sel, src, dst, k, amount, full):
 
 @block
 def reg_stage(d, q, clk, reset, reset_value):
-    """Registered output stage: reset clears, otherwise capture."""
+    """Registered output stage: synchronous reset clears, otherwise capture."""
+    active = int(reset.active)
 
     @always(clk.posedge)
     def logic():
-        if not reset:
-            q.next = d
-        else:
+        if reset == active:
             q.next = reset_value
+        else:
+            q.next = d
 
     return logic
 
 
 @block
 def bool_reg(d, q, clk, reset):
-    """Single-bit registered output stage (resets to ``False``)."""
+    """Single-bit registered output stage (synchronous reset to ``False``)."""
+    active = int(reset.active)
 
     @always(clk.posedge)
     def logic():
-        if not reset:
-            q.next = d
-        else:
+        if reset == active:
             q.next = False
+        else:
+            q.next = d
 
     return logic
 
@@ -95,13 +98,12 @@ class Decoder(ComponentBase):
         p_n = check_positive(n, "n")
         p_reset_value = check_non_negative(reset_value, "reset_value")
         p_reset_value &= mask(p_n)
-        p_reset_signal = reset_signal if isinstance(reset_signal, ResetSignal) else None
         self._params = {
             "n": p_n,
             "en": check_bool(en, "en"),
             "registered": check_registered(registered),
             "reset_value": p_reset_value,
-            "reset_signal": p_reset_signal,
+            "reset_signal": make_reset(reset_signal),
         }
 
     @property
@@ -120,8 +122,6 @@ class Decoder(ComponentBase):
             sig["en"] = Signal(bool(0))
         if self._params["registered"]:
             sig["clk"] = Signal(bool(0))
-            if self._params["reset_signal"] is None:
-                self._params["reset_signal"] = ResetSignal(0, active=0, isasync=False)
             sig["reset"] = self._params["reset_signal"]
         return SignalView(**sig)
 
@@ -197,14 +197,13 @@ class PriorityEncoder(ComponentBase):
         p_priority = check_choice(priority, PRIORITIES, "priority")
         p_reset_value = check_non_negative(reset_value, "reset_value")
         p_reset_value &= mask(max(1, ceil_log2(p_n)))
-        p_reset_signal = reset_signal if isinstance(reset_signal, ResetSignal) else None
         self._params = {
             "n": p_n,
             "priority": p_priority,
             "en": check_bool(en, "en"),
             "registered": check_registered(registered),
             "reset_value": p_reset_value,
-            "reset_signal": p_reset_signal,
+            "reset_signal": make_reset(reset_signal),
         }
 
     @property
@@ -224,8 +223,6 @@ class PriorityEncoder(ComponentBase):
             sig["en"] = Signal(bool(0))
         if self._params["registered"]:
             sig["clk"] = Signal(bool(0))
-            if self._params["reset_signal"] is None:
-                self._params["reset_signal"] = ResetSignal(0, active=0, isasync=False)
             sig["reset"] = self._params["reset_signal"]
         return SignalView(**sig)
 

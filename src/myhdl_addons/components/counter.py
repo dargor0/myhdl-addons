@@ -9,7 +9,7 @@ mux selects by ``step_sel``; one clocked process registers count/prescaler and
 ``tick`` is derived from the terminal count.
 """
 
-from myhdl import Signal, always, always_comb, block, intbv
+from myhdl import ResetSignal, Signal, always, always_comb, block, intbv
 
 from ..common.config import (
     ComponentBase,
@@ -20,6 +20,7 @@ from ..common.config import (
     check_positive,
 )
 from ..common.errors import HdlConfigError
+from ..common.reset import make_reset
 from ..common.views import SignalView
 from .incrementer import WRAP_MODES, _check_steps
 from .mux_tree import build_mux_tree
@@ -79,7 +80,7 @@ def counter_loaded(load_value, loaded, lo, hi):
 @block
 def counter_state(
     clk,
-    resetn,
+    reset,
     en,
     load,
     loaded,
@@ -91,13 +92,14 @@ def counter_state(
     load_enable,
 ):
     """Register count (and prescaler) with reset/load/enable priority."""
+    active = int(reset.active)
 
     if prescaler > 1:
         if load_enable:
 
             @always(clk.posedge)
             def p():
-                if not resetn:
+                if reset == active:
                     count.next = reset_value
                     presc.next = 0
                 elif load:
@@ -114,7 +116,7 @@ def counter_state(
 
             @always(clk.posedge)
             def p():
-                if not resetn:
+                if reset == active:
                     count.next = reset_value
                     presc.next = 0
                 elif en:
@@ -129,7 +131,7 @@ def counter_state(
 
             @always(clk.posedge)
             def p():
-                if not resetn:
+                if reset == active:
                     count.next = reset_value
                 elif load:
                     count.next = loaded
@@ -140,7 +142,7 @@ def counter_state(
 
             @always(clk.posedge)
             def p():
-                if not resetn:
+                if reset == active:
                     count.next = reset_value
                 elif en:
                     count.next = step_next
@@ -187,6 +189,7 @@ class Counter(ComponentBase):
         load_enable: bool = True,
         reset_value: int = 0,
         tick: bool = True,
+        reset_signal: ResetSignal | None = None,
     ) -> None:
         p_width = check_positive(width, "width")
         p_min = check_int(min, "min")
@@ -214,6 +217,7 @@ class Counter(ComponentBase):
             "load_enable": check_bool(load_enable, "load_enable"),
             "reset_value": p_reset_value,
             "tick": check_bool(tick, "tick"),
+            "reset_signal": make_reset(reset_signal),
         }
 
     @property
@@ -230,7 +234,7 @@ class Counter(ComponentBase):
         width = self._params["width"]
         sig = {
             "clk": Signal(bool(0)),
-            "resetn": Signal(bool(0)),
+            "reset": self._params["reset_signal"],
             "en": Signal(bool(1)),
             "count": Signal(intbv(self._params["reset_value"])[width:]),
         }
@@ -295,7 +299,7 @@ class Counter(ComponentBase):
         proclist.append(
             counter_state(
                 ports.clk,
-                ports.resetn,
+                ports.reset,
                 ports.en,
                 load,
                 loaded,

@@ -17,9 +17,9 @@ def _rom_tb(results, config, actions):
 
     @instance
     def stim():
-        ports.resetn.next = 0
+        ports.reset.next = 0
         yield ports.clk.posedge
-        ports.resetn.next = 1
+        ports.reset.next = 1
         for action in actions:
             for name, value in action.get("set", {}).items():
                 getattr(ports, name).next = value

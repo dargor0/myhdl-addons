@@ -7,13 +7,23 @@ from myhdl_addons.components import AVAIL_OUTPUTS, Comparator
 
 
 @block
-def _cmp_tb(results, width, a, b, signed):
+def _python_device(comparator, ports):
+    return comparator.hdl(ports)
+
+
+@block
+def _cmp_tb(make_device, results, width, a, b, signed):
     comparator = Comparator(width=width, outputs=AVAIL_OUTPUTS, signed=signed)
     ports = comparator.ports()
-    dut = comparator.hdl(ports)
+    dut = make_device(comparator, ports)
 
     @instance
     def stim():
+        # Kick the converted logic with a known-different state first (cosim
+        # does not re-evaluate when no input changes).
+        ports.a.next = 0
+        ports.b.next = (1 << width) - 1
+        yield delay(1)
         ports.a.next = a
         ports.b.next = b
         yield delay(1)
@@ -23,9 +33,9 @@ def _cmp_tb(results, width, a, b, signed):
     return dut, stim
 
 
-def _flags(width, a, b, signed=True):
+def _flags(width, a, b, signed=True, make_device=_python_device):
     results = []
-    _cmp_tb(results, width, a, b, signed).run_sim()
+    _cmp_tb(make_device, results, width, a, b, signed).run_sim()
     return results[0]
 
 

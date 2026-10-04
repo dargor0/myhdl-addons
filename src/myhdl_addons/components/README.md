@@ -44,8 +44,14 @@ values and are re-exported from `myhdl_addons.components`.
 Combinational components offer a uniform **`registered`** option: `registered=0`
 is pure combinational (no clock), `registered=1` adds an output register
 (`clk`/`reset`, plus `en` when enabled) and one cycle of latency, with
-`reset_value` as the registered reset.  Registered components use the `reset`
-port; sequential components use active-low `resetn`.
+`reset_value` as the registered reset.
+
+Every clocked component exposes its reset as a port named **`reset`** holding a
+`myhdl.ResetSignal` (optionally supplied via `reset_signal`).  The **active
+level** comes from that `ResetSignal` (`active`), so either polarity is
+supported, but the reset is **always synchronous** and **active-low by
+default** (`ResetSignal(0, active=0, isasync=False)`); an asynchronous
+`ResetSignal` raises at construction.
 
 ### `Alu` — arithmetic/logic unit
 
@@ -174,15 +180,16 @@ ports = dec.ports()  # adr, sel0, sel1
 
 ## Sequential building blocks
 
-Sequential components always have `clk`; resets are **active-low `resetn`**
-unless stated otherwise.
+Sequential components always have `clk`.  The reset port is named **`reset`**
+(a `ResetSignal`; active level from `reset_signal`, default active-low,
+always synchronous).
 
 ### `Register` — plain and pipeline register
 
-`Register(fields=None, en=True, flush=False, load=False, reset_enable=True, reset_values=None, flush_values=None, load_values=None, init=None)`
+`Register(fields=None, en=True, flush=False, load=False, reset_enable=True, reset_values=None, flush_values=None, load_values=None, init=None, reset_signal=None)`
 
 - `fields` is a list of `(name, width)` pairs (default `[("q", 32)]`).
-- Ports: `clk`, `resetn`; per field `d_<name>` and `q_<name>`; `en`, `flush`,
+- Ports: `clk`, `reset`; per field `d_<name>` and `q_<name>`; `en`, `flush`,
   `load` when enabled.
 - **Usage:** control priority is `reset > flush > load > en > hold`; `en=0`
   holds, `flush`/`load` force their configured per-field values.  A **pipeline
@@ -190,20 +197,20 @@ unless stated otherwise.
 
 ### `Counter` — sequential stepper
 
-`Counter(width=32, steps=None, min=0, max=None, wrap_mode="wrap", prescaler=1, load_enable=True, reset_value=0, tick=True)`
+`Counter(width=32, steps=None, min=0, max=None, wrap_mode="wrap", prescaler=1, load_enable=True, reset_value=0, tick=True, reset_signal=None)`
 
 - The sequential counterpart of `Incrementer` (same `steps`/`step_sel`/
   `wrap_mode`/`load` semantics).
-- Ports: `clk`, `resetn`, `en`, `count`; `step_sel`; `load`/`load_value`;
+- Ports: `clk`, `reset`, `en`, `count`; `step_sel`; `load`/`load_value`;
   optional `tick`.
 - **Usage:** counts within `[min, max]`; `prescaler` divides the input `en`;
   `tick` asserts at the terminal count.
 
 ### `RegisterFile` — multi-port register bank
 
-`RegisterFile(width=32, depth=32, read_ports=2, write_ports=1, read_latency=0, write_mode="read_first", zero_reg_fix_value=None, reset_enable=True, reset_value=0, init=None, byte_write=False)`
+`RegisterFile(width=32, depth=32, read_ports=2, write_ports=1, read_latency=0, write_mode="read_first", zero_reg_fix_value=None, reset_enable=True, reset_value=0, init=None, byte_write=False, reset_signal=None)`
 
-- Ports: `clk`, `resetn`; per write port `we{p}`/`waddr{p}`/`wdata{p}` (and
+- Ports: `clk`, `reset`; per write port `we{p}`/`waddr{p}`/`wdata{p}` (and
   `wstrb{p}` with `byte_write`); per read port `raddr{p}`/`rdata{p}`.
 - `write_mode` ∈ `WRITE_MODES` = `read_first / write_first / no_change` for
   same-address accesses; `read_latency` is `0` (async) or `1` (registered).
@@ -214,9 +221,9 @@ unless stated otherwise.
 
 ### `SyncRam` — read/write memory
 
-`SyncRam(width, depth, read_latency=1, write_mode="read_first", read_ports=1, write_ports=1, byte_write=0, init=None, output_register=False)`
+`SyncRam(width, depth, read_latency=1, write_mode="read_first", read_ports=1, write_ports=1, byte_write=0, init=None, output_register=False, reset_signal=None)`
 
-- Ports: `clk`, `resetn`; per write port `we{p}`/`waddr{p}`/`wdata{p}` (+
+- Ports: `clk`, `reset`; per write port `we{p}`/`waddr{p}`/`wdata{p}` (+
   `wstrb{p}`); per read port `raddr{p}`/`rdata{p}`.
 - `byte_write` is `0` (off) or `width/8`.  `init` loads an optional image.
 - **Usage:** total read latency is `read_latency + output_register`.  Reset
@@ -224,20 +231,20 @@ unless stated otherwise.
 
 ### `SyncRom` — read-only memory
 
-`SyncRom(width, depth, init, read_latency=1, read_ports=1, output_register=False)`
+`SyncRom(width, depth, init, read_latency=1, read_ports=1, output_register=False, reset_signal=None)`
 
 - `init` is **required** and must have length `depth`.
-- Ports: `clk`, `resetn`; per read port `raddr{p}`/`rdata{p}`.
+- Ports: `clk`, `reset`; per read port `raddr{p}`/`rdata{p}`.
 - Total read latency is `read_latency + output_register`.
 
 ### `Fifo` — synchronous FIFO / skid buffer
 
-`Fifo(width, depth, interface="wr_rd", fall_through=False, almost_full=0, almost_empty=0, count=False, flush=False, registered_outputs=False)`
+`Fifo(width, depth, interface="wr_rd", fall_through=False, almost_full=0, almost_empty=0, count=False, flush=False, registered_outputs=False, reset_signal=None)`
 
 - `interface` ∈ `INTERFACES` = `wr_rd` (native) or `stream` (valid/ready).
-- Ports (`wr_rd`): `clk`, `resetn`, `wr_en`, `wdata`, `rd_en`, `rdata`, `full`,
+- Ports (`wr_rd`): `clk`, `reset`, `wr_en`, `wdata`, `rd_en`, `rdata`, `full`,
   `empty`.
-- Ports (`stream`): `clk`, `resetn`, `valid_in`, `ready_in`, `data_in`,
+- Ports (`stream`): `clk`, `reset`, `valid_in`, `ready_in`, `data_in`,
   `valid_out`, `ready_out`, `data_out`.
 - Optional `count`, `almost_full`, `almost_empty`, `flush`.
 - **Usage:** `fall_through=True` gives a first-word-fall-through (combinational)

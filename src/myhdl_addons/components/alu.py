@@ -22,7 +22,8 @@ from ..common.config import (
     ceil_log2,
     check_positive,
 )
-from ..common.errors import HdlConfigError, HdlTypeError
+from ..common.errors import HdlConfigError
+from ..common.reset import make_reset
 from ..common.views import SignalView
 from .mux_tree import MuxTree
 
@@ -70,7 +71,6 @@ class Alu(ComponentBase):
         p_registered = bool(registered)
         p_en = bool(en)
         p_reset_value = reset_value
-        p_reset_signal = reset_signal if isinstance(reset_signal, ResetSignal) else None
         self._params = {
             "width": p_width,
             "ops": p_ops,
@@ -79,7 +79,7 @@ class Alu(ComponentBase):
             "registered": p_registered,
             "en": p_en,
             "reset_value": p_reset_value,
-            "reset_signal": p_reset_signal,
+            "reset_signal": make_reset(reset_signal),
         }
         self._extraops = {}
 
@@ -97,9 +97,7 @@ class Alu(ComponentBase):
             sig[flag] = Signal(bool(0))
         if self._params["registered"]:
             sig["clk"] = Signal(bool(0))
-            if self._params["reset_signal"] is None:
-                self._params["reset_signal"] = ResetSignal(0, active=0, isasync=False)
-                sig["reset"] = self._params["reset_signal"]
+            sig["reset"] = self._params["reset_signal"]
             if self._params["en"]:
                 sig["en"] = Signal(bool(0))
         return SignalView(**sig)
@@ -327,23 +325,30 @@ class Alu(ComponentBase):
             proclist.append(alu_flag_zero)
 
         if self._params["registered"]:
-            en_sig = ports.en if self._params["en"] else Signal(bool(1))
             reset_value = self._params["reset_value"] & ((1 << width) - 1)
 
-            # NOTE: reset signal level and async is hardcoded to active high synchronous.
-            if not isinstance(ports.reset, ResetSignal):
-                raise HdlTypeError("Reset signal must be of ResetSignal type")
+            # Synchronous reset; polarity from the ResetSignal's active level.
+            active = int(ports.reset.active)
 
             # NOTE: @always_seq is not detecting the reset functionality,
             # Changing back to @always decorator
+            if self._params["en"]:
 
-            @always(ports.clk.posedge)
-            def alu_reg_output():
-                if not ports.reset:
-                    if en_sig:
+                @always(ports.clk.posedge)
+                def alu_reg_output():
+                    if ports.reset == active:
+                        ports.y.next = reset_value
+                    elif ports.en:
                         ports.y.next = partial_y[width:]
-                else:
-                    ports.y.next = reset_value
+
+            else:
+
+                @always(ports.clk.posedge)
+                def alu_reg_output():
+                    if ports.reset == active:
+                        ports.y.next = reset_value
+                    else:
+                        ports.y.next = partial_y[width:]
 
         else:
 

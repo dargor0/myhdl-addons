@@ -5,7 +5,6 @@ block or the converted Verilog RTL; both must agree.
 """
 
 import pytest
-
 from test_component_counter_count import _run
 
 

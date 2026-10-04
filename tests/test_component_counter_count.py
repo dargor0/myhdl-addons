@@ -23,10 +23,10 @@ def _counter_tb(make_device, results, config, drives, with_tick=False):
 
     @instance
     def stim():
-        ports.resetn.next = 0
+        ports.reset.next = 0
         ports.en.next = 0
         yield ports.clk.posedge
-        ports.resetn.next = 1
+        ports.reset.next = 1
         for drive in drives:
             for name, value in drive.items():
                 getattr(ports, name).next = value

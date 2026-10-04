@@ -23,6 +23,7 @@ from ..common.config import (
     mask,
 )
 from ..common.errors import HdlConfigError
+from ..common.reset import make_reset
 from ..common.views import SignalView
 from .mux_tree import build_mux_tree
 
@@ -152,28 +153,30 @@ def inc_output(ports, y_dst, carry_dst, y_step, carry_step, has_load, has_carry)
 
 @block
 def reg_stage(d, q, clk, reset, reset_value):
-    """Registered output stage: reset clears, otherwise capture."""
+    """Registered output stage: synchronous reset clears, otherwise capture."""
+    active = int(reset.active)
 
     @always(clk.posedge)
     def logic():
-        if not reset:
-            q.next = d
-        else:
+        if reset == active:
             q.next = reset_value
+        else:
+            q.next = d
 
     return logic
 
 
 @block
 def bool_reg(d, q, clk, reset):
-    """Single-bit registered output stage (resets to ``False``)."""
+    """Single-bit registered output stage (synchronous reset to ``False``)."""
+    active = int(reset.active)
 
     @always(clk.posedge)
     def logic():
-        if not reset:
-            q.next = d
-        else:
+        if reset == active:
             q.next = False
+        else:
+            q.next = d
 
     return logic
 
@@ -214,9 +217,7 @@ class Incrementer(ComponentBase):
             "carry": check_bool(carry, "carry"),
             "registered": check_registered(registered),
             "reset_value": p_reset_value,
-            "reset_signal": reset_signal
-            if isinstance(reset_signal, ResetSignal)
-            else None,
+            "reset_signal": make_reset(reset_signal),
         }
 
     @property
@@ -245,8 +246,6 @@ class Incrementer(ComponentBase):
             sig["carry"] = Signal(bool(0))
         if self._params["registered"]:
             sig["clk"] = Signal(bool(0))
-            if self._params["reset_signal"] is None:
-                self._params["reset_signal"] = ResetSignal(0, active=0, isasync=False)
             sig["reset"] = self._params["reset_signal"]
         return SignalView(**sig)
 

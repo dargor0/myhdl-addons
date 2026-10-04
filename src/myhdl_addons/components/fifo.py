@@ -11,7 +11,7 @@ pipeline (head, fall-through/registered data + valid) is a few small
 combinational/clocked processes.
 """
 
-from myhdl import Signal, always, always_comb, block, intbv
+from myhdl import ResetSignal, Signal, always, always_comb, block, intbv
 
 from ..common.config import (
     ComponentBase,
@@ -21,6 +21,7 @@ from ..common.config import (
     check_non_negative,
     check_positive,
 )
+from ..common.reset import make_reset
 from ..common.views import SignalView
 
 __all__ = ["INTERFACES", "STREAM", "WR_RD", "Fifo"]
@@ -31,14 +32,15 @@ INTERFACES = (WR_RD, STREAM)
 
 
 @block
-def fifo_reset(resetn, flush, reset_sig, has_flush):
-    """Combine active-low reset and optional flush into one reset signal."""
+def fifo_reset(reset, flush, reset_sig, has_flush):
+    """Combine the synchronous reset and optional flush into one reset signal."""
+    active = int(reset.active)
 
     if has_flush:
 
         @always_comb
         def p():
-            if (not resetn) or flush:
+            if (reset == active) or flush:
                 reset_sig.next = 1
             else:
                 reset_sig.next = 0
@@ -47,7 +49,7 @@ def fifo_reset(resetn, flush, reset_sig, has_flush):
 
         @always_comb
         def p():
-            if not resetn:
+            if reset == active:
                 reset_sig.next = 1
             else:
                 reset_sig.next = 0
@@ -276,6 +278,7 @@ class Fifo(ComponentBase):
         count: bool = False,
         flush: bool = False,
         registered_outputs: bool = False,
+        reset_signal: ResetSignal | None = None,
     ) -> None:
         p_width = check_positive(width, "width")
         p_depth = check_positive(depth, "depth")
@@ -290,6 +293,7 @@ class Fifo(ComponentBase):
             "flush": check_bool(flush, "flush"),
             "registered_outputs": check_bool(registered_outputs, "registered_outputs"),
             "addr_bits": max(1, ceil_log2(p_depth)),
+            "reset_signal": make_reset(reset_signal),
         }
 
     @property
@@ -300,7 +304,7 @@ class Fifo(ComponentBase):
     def ports(self) -> SignalView:
         """Allocate and return the component interface."""
         width = self._params["width"]
-        sig = {"clk": Signal(bool(0)), "resetn": Signal(bool(0))}
+        sig = {"clk": Signal(bool(0)), "reset": self._params["reset_signal"]}
         if self.stream:
             sig["valid_in"] = Signal(bool(0))
             sig["ready_in"] = Signal(bool(0))
@@ -365,7 +369,7 @@ class Fifo(ComponentBase):
 
         proclist.append(
             fifo_reset(
-                ports.resetn, ports.flush if has_flush else None, reset_sig, has_flush
+                ports.reset, ports.flush if has_flush else None, reset_sig, has_flush
             )
         )
         proclist.append(fifo_head(mem, rptr, head))

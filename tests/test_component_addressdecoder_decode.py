@@ -8,15 +8,21 @@ _WINDOWS = ((0x00, 0x10), (0x20, 0x10), (0x40, 0x20))
 
 
 @block
-def _ad_tb(results, config, adr, en=None, sample_valid=False):
+def _python_device(dec, ports):
+    return dec.hdl(ports)
+
+
+@block
+def _ad_tb(make_device, results, config, adr, en=None, sample_valid=False):
     config = {**config, "valid": True}
     dec = AddressDecoder(**config)
     ports = dec.ports()
-    dut = dec.hdl(ports)
+    dut = make_device(dec, ports)
     clk = ports.signals.get("clk")
     reset = ports.signals.get("reset")
     en_sig = ports.signals.get("en")
     registered = config.get("registered", 0)
+    sentinel = (1 << config["adr_width"]) - 1
     if registered:
 
         @always(delay(5))
@@ -26,9 +32,15 @@ def _ad_tb(results, config, adr, en=None, sample_valid=False):
     @instance
     def stim():
         if registered:
-            reset.next = 1
-            yield clk.posedge
             reset.next = 0
+            yield clk.posedge
+            reset.next = 1
+        # Kick the converted logic with a known-different state first (cosim
+        # does not re-evaluate when no input changes).
+        ports.adr.next = sentinel
+        if en_sig is not None:
+            en_sig.next = 0
+        yield delay(1)
         ports.adr.next = adr
         if en_sig is not None:
             en_sig.next = en
@@ -44,9 +56,9 @@ def _ad_tb(results, config, adr, en=None, sample_valid=False):
     return (clkgen, dut, stim) if registered else (dut, stim)
 
 
-def _run(config, adr, en=None, sample_valid=False):
+def _run(config, adr, en=None, sample_valid=False, *, make_device=_python_device):
     results = []
-    _ad_tb(results, config, adr, en, sample_valid).run_sim()
+    _ad_tb(make_device, results, config, adr, en, sample_valid).run_sim()
     return results[0]
 
 

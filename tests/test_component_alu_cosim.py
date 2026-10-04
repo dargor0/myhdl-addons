@@ -95,11 +95,11 @@ def _alu_reg_bench(make_device, results):
 
     @instance
     def stim():
-        ports.reset.next = 1
+        ports.reset.next = 0
         yield ports.clk.posedge
         yield delay(1)
         results.append(int(ports.y))
-        ports.reset.next = 0
+        ports.reset.next = 1
         ports.en.next = 1
         ports.a.next = 10
         ports.b.next = 5

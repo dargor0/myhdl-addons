@@ -7,10 +7,15 @@ from myhdl_addons.components import Register
 
 
 @block
-def _capture_tb(results):
+def _python_device(reg, ports):
+    return reg.hdl(ports)
+
+
+@block
+def _capture_tb(make_device, results):
     reg = Register(fields=[("q", 8)], en=True, reset_values={"q": 0})
     ports = reg.ports()
-    dut = reg.hdl(ports)
+    dut = make_device(reg, ports)
 
     @always(delay(5))
     def clkgen():
@@ -18,13 +23,13 @@ def _capture_tb(results):
 
     @instance
     def stim():
-        ports.resetn.next = 0
+        ports.reset.next = 0
         ports.en.next = 1
         ports.d_q.next = 0xAA
         yield ports.clk.posedge
         yield delay(1)
         results.append(int(ports.q_q))
-        ports.resetn.next = 1
+        ports.reset.next = 1
         yield ports.clk.posedge
         yield delay(1)
         results.append(int(ports.q_q))
@@ -40,12 +45,12 @@ def _capture_tb(results):
 
 def test_capture_reset_and_enable():
     results = []
-    _capture_tb(results).run_sim()
+    _capture_tb(_python_device, results).run_sim()
     assert results == [0, 0xAA, 0xAA]
 
 
 @block
-def _control_tb(results):
+def _control_tb(make_device, results):
     reg = Register(
         fields=[("q", 8)],
         en=True,
@@ -56,7 +61,7 @@ def _control_tb(results):
         load_values={"q": 0x0F},
     )
     ports = reg.ports()
-    dut = reg.hdl(ports)
+    dut = make_device(reg, ports)
 
     @always(delay(5))
     def clkgen():
@@ -64,7 +69,7 @@ def _control_tb(results):
 
     @instance
     def stim():
-        ports.resetn.next = 1
+        ports.reset.next = 1
         ports.en.next = 1
         ports.d_q.next = 0xAB
         yield ports.clk.posedge
@@ -80,7 +85,7 @@ def _control_tb(results):
         yield delay(1)
         results.append(int(ports.q_q))
         ports.flush.next = 0
-        ports.resetn.next = 0
+        ports.reset.next = 0
         yield ports.clk.posedge
         yield delay(1)
         results.append(int(ports.q_q))
@@ -91,15 +96,15 @@ def _control_tb(results):
 
 def test_control_priority():
     results = []
-    _control_tb(results).run_sim()
+    _control_tb(_python_device, results).run_sim()
     assert results == [0xAB, 0x0F, 0xF0, 0x00]
 
 
 @block
-def _multi_tb(results):
+def _multi_tb(make_device, results):
     reg = Register(fields=[("lo", 4), ("hi", 8)], en=False)
     ports = reg.ports()
-    dut = reg.hdl(ports)
+    dut = make_device(reg, ports)
 
     @always(delay(5))
     def clkgen():
@@ -107,11 +112,11 @@ def _multi_tb(results):
 
     @instance
     def stim():
-        ports.resetn.next = 0
+        ports.reset.next = 0
         yield ports.clk.posedge
         yield delay(1)
         results.append((int(ports.q_lo), int(ports.q_hi)))
-        ports.resetn.next = 1
+        ports.reset.next = 1
         ports.d_lo.next = 0xA
         ports.d_hi.next = 0x5A
         yield ports.clk.posedge
@@ -124,7 +129,7 @@ def _multi_tb(results):
 
 def test_multi_field_bundling():
     results = []
-    _multi_tb(results).run_sim()
+    _multi_tb(_python_device, results).run_sim()
     assert results == [(0, 0), (0xA, 0x5A)]
 
 

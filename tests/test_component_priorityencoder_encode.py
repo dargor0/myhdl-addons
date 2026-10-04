@@ -6,12 +6,17 @@ from myhdl_addons.components import PriorityEncoder
 
 
 @block
-def _pe_tb(results, n, din, priority="low", en=None, registered=0):
+def _python_device(encoder, ports):
+    return encoder.hdl(ports)
+
+
+@block
+def _pe_tb(make_device, results, n, din, priority="low", en=None, registered=0):
     encoder = PriorityEncoder(
         n=n, priority=priority, en=(en is not None), registered=registered
     )
     ports = encoder.ports()
-    dut = encoder.hdl(ports)
+    dut = make_device(encoder, ports)
     clk = ports.signals.get("clk")
     reset = ports.signals.get("reset")
     en_sig = ports.signals.get("en")
@@ -23,13 +28,18 @@ def _pe_tb(results, n, din, priority="low", en=None, registered=0):
 
     @instance
     def stim():
+        # Kick the converted logic with a known-different state first.
+        ports.din.next = (1 << n) - 1
+        if en_sig is not None:
+            en_sig.next = 0
+        yield delay(1)
         ports.din.next = din
         if en_sig is not None:
             en_sig.next = en
         if registered:
-            reset.next = 1
-            yield clk.posedge
             reset.next = 0
+            yield clk.posedge
+            reset.next = 1
             yield clk.posedge
         yield delay(1)
         results.append((int(ports.index), int(ports.valid)))
@@ -38,9 +48,9 @@ def _pe_tb(results, n, din, priority="low", en=None, registered=0):
     return (clkgen, dut, stim) if registered else (dut, stim)
 
 
-def _run(din, **kwargs):
+def _run(din, n=4, priority="low", en=None, registered=0, make_device=_python_device):
     results = []
-    _pe_tb(results, kwargs.pop("n", 4), din, **kwargs).run_sim()
+    _pe_tb(make_device, results, n, din, priority, en, registered).run_sim()
     return results[0]
 
 
@@ -71,5 +81,5 @@ def test_index_width():
 
 def test_registered_encoder():
     results = []
-    _pe_tb(results, 4, 0b1000, registered=1).run_sim()
+    _pe_tb(_python_device, results, 4, 0b1000, registered=1).run_sim()
     assert results == [(3, 1)]

@@ -37,9 +37,9 @@ def _oor_tb(results):
 
     @instance
     def stim():
-        ports.resetn.next = 0
+        ports.reset.next = 0
         yield ports.clk.posedge
-        ports.resetn.next = 1
+        ports.reset.next = 1
         ports.raddr0.next = 3
         yield delay(1)
         results.append(int(ports.rdata0))
