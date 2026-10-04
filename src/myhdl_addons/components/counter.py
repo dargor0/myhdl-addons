@@ -22,6 +22,7 @@ from ..common.config import (
 from ..common.errors import HdlConfigError
 from ..common.views import SignalView
 from .incrementer import WRAP_MODES, _check_steps
+from .mux_tree import build_mux_tree
 
 __all__ = ["Counter"]
 
@@ -55,20 +56,6 @@ def counter_step(mode, step, count, nc, lo, hi, span):
         def p():
             d = (int(count) + step) - lo
             nc.next = lo + (d % span)
-
-    return p
-
-
-@block
-def counter_mux(step_sel, partials, hold, step_next, nsteps):
-    """Select the active step's next count; out-of-range holds ``count``."""
-
-    @always(step_sel, hold, *partials)
-    def p():
-        if int(step_sel) < nsteps:
-            step_next.next = partials[int(step_sel)]
-        else:
-            step_next.next = hold
 
     return p
 
@@ -282,10 +269,18 @@ class Counter(ComponentBase):
             )
 
         if self._has_step_sel:
+            # Balanced select tree; out-of-range codes hold ``count`` by using
+            # it as the padding leaf.
+            sel_bits = self._step_bits
+            padding = (1 << sel_bits) - len(steps)
             step_next = Signal(intbv(0)[width:])
             proclist.append(
-                counter_mux(
-                    ports.step_sel, tuple(partials), count, step_next, len(steps)
+                build_mux_tree(
+                    ports.step_sel,
+                    [*partials, *([count] * padding)],
+                    step_next,
+                    sel_bits,
+                    width,
                 )
             )
         else:

@@ -7,7 +7,13 @@ from myhdl_addons.components import Incrementer
 
 
 @block
+def _python_device(inc, ports):
+    return inc.hdl(ports)
+
+
+@block
 def _inc_tb(
+    make_device,
     results,
     width,
     steps,
@@ -28,7 +34,7 @@ def _inc_tb(
         carry=carry,
     )
     ports = inc.ports()
-    dut = inc.hdl(ports)
+    dut = make_device(inc, ports)
     has_sel = len(inc.as_dict()["steps"]) > 1
     step_sel_sig = ports.signals.get("step_sel")
     load_sig = ports.signals.get("load")
@@ -37,6 +43,16 @@ def _inc_tb(
 
     @instance
     def stim():
+        # Drive a known-different state first: a converted combinational DUT
+        # is not re-evaluated by cosimulation when no input changes.
+        ports.a.next = 0
+        ports.en.next = 0
+        if has_sel:
+            step_sel_sig.next = 0
+        if load_enable:
+            load_sig.next = 0
+            load_value_sig.next = 0
+        yield delay(1)
         ports.a.next = a
         ports.en.next = en
         if has_sel:
@@ -53,9 +69,19 @@ def _inc_tb(
     return dut, stim
 
 
-def _run(width=8, a=0, en=1, sel=0, load=0, load_value=0, **kwargs):
+def _run(
+    width=8,
+    a=0,
+    en=1,
+    sel=0,
+    load=0,
+    load_value=0,
+    make_device=_python_device,
+    **kwargs,
+):
     results = []
     _inc_tb(
+        make_device,
         results,
         width,
         kwargs.get("steps"),

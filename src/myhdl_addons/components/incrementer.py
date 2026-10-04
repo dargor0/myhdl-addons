@@ -24,6 +24,7 @@ from ..common.config import (
 )
 from ..common.errors import HdlConfigError
 from ..common.views import SignalView
+from .mux_tree import build_mux_tree
 
 __all__ = ["WRAP_MODES", "Incrementer"]
 
@@ -95,33 +96,6 @@ def derive_step(ps, py, pc, wrap_mode, sat_val, width, has_carry):
                     py.next = ps[width:]
 
     return d
-
-
-@block
-def inc_mux(sel, partial_y, partial_carry, a, y_step, carry_step, nsteps, has_carry):
-    """Select the active step's result; an out-of-range ``sel`` holds ``a``."""
-
-    if has_carry:
-
-        @always(sel, a, *partial_y, *partial_carry)
-        def mux():
-            if int(sel) < nsteps:
-                y_step.next = partial_y[int(sel)]
-                carry_step.next = partial_carry[int(sel)]
-            else:
-                y_step.next = a
-                carry_step.next = 0
-
-    else:
-
-        @always(sel, a, *partial_y)
-        def mux():
-            if int(sel) < nsteps:
-                y_step.next = partial_y[int(sel)]
-            else:
-                y_step.next = a
-
-    return mux
 
 
 @block
@@ -312,20 +286,33 @@ class Incrementer(ComponentBase):
             proclist.append(derive_step(ps, py, pc, wrap_mode, sat_val, width, carry))
 
         if self._has_step_sel:
+            # Balanced select tree; out-of-range codes hold ``a`` (y) / 0
+            # (carry) by using those values as the padding leaves.
+            sel_bits = self._step_bits
+            padding = (1 << sel_bits) - nsteps
             y_step = Signal(intbv(0)[width:])
-            carry_step = Signal(bool(0)) if carry else None
             proclist.append(
-                inc_mux(
+                build_mux_tree(
                     ports.step_sel,
-                    tuple(partial_y),
-                    tuple(partial_carry) if carry else (),
-                    ports.a,
+                    [*partial_y, *([ports.a] * padding)],
                     y_step,
-                    carry_step,
-                    nsteps,
-                    carry,
+                    sel_bits,
+                    width,
                 )
             )
+            if carry:
+                carry_step = Signal(bool(0))
+                proclist.append(
+                    build_mux_tree(
+                        ports.step_sel,
+                        [*partial_carry, *([0] * padding)],
+                        carry_step,
+                        sel_bits,
+                        1,
+                    )
+                )
+            else:
+                carry_step = None
         else:
             y_step = partial_y[0]
             carry_step = partial_carry[0] if carry else None

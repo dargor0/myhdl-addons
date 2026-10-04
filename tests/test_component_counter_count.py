@@ -6,10 +6,15 @@ from myhdl_addons.components import Counter
 
 
 @block
-def _counter_tb(results, config, drives, with_tick=False):
+def _python_device(counter, ports):
+    return counter.hdl(ports)
+
+
+@block
+def _counter_tb(make_device, results, config, drives, with_tick=False):
     counter = Counter(**config)
     ports = counter.ports()
-    dut = counter.hdl(ports)
+    dut = make_device(counter, ports)
     tick_sig = ports.signals.get("tick")
 
     @always(delay(5))
@@ -36,9 +41,9 @@ def _counter_tb(results, config, drives, with_tick=False):
     return clkgen, dut, stim
 
 
-def _run(config, drives, with_tick=False):
+def _run(config, drives, with_tick=False, *, make_device=_python_device):
     results = []
-    _counter_tb(results, config, drives, with_tick).run_sim()
+    _counter_tb(make_device, results, config, drives, with_tick).run_sim()
     return results
 
 
