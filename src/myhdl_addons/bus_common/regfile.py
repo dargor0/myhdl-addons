@@ -245,15 +245,31 @@ def engine_ack(req, ack):
 
 
 @block
-def engine_readmux(matches, signals, rdata, n):
-    """Read mux: ``rdata`` = the stored register selected by ``matches``."""
+def engine_read_stage(match, value, acc, dst, first):
+    """One stage of the read-mux chain: select ``value`` when ``match``.
 
-    @always(*matches, *signals)
-    def p():
-        rdata.next = 0
-        for i in range(n):
-            if matches[i]:
-                rdata.next = signals[i]
+    Registers are non-overlapping, so a priority chain over individual signals
+    is equivalent to an indexed mux while avoiding a list-of-signals (which
+    MyHDL would convert to an invalid, continuously-assigned Verilog memory).
+    """
+
+    if first:
+
+        @always_comb
+        def p():
+            if match:
+                dst.next = value
+            else:
+                dst.next = 0
+
+    else:
+
+        @always_comb
+        def p():
+            if match:
+                dst.next = value
+            else:
+                dst.next = acc
 
     return p
 
@@ -454,7 +470,14 @@ class RegisterEngine:
                 proclist.append(engine_strobe(req, we, matches[i], rd[i], wr[i], False))
 
         proclist.append(engine_ack(req, ack))
-        proclist.append(engine_readmux(matches, signals, rdata, n))
+
+        acc = 0
+        for i in range(n):
+            dst = rdata if i == n - 1 else Signal(intbv(0)[width:])
+            proclist.append(
+                engine_read_stage(matches[i], signals[i], acc, dst, i == 0)
+            )
+            acc = dst
 
         return proclist
 

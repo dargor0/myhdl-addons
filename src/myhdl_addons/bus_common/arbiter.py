@@ -38,25 +38,93 @@ class ArbiterBase(ABC):
 
 
 @block
+def fixed_priority_arbiter_single(req, grant):
+    """Only-requester case: ``grant = req``."""
+
+    @always_comb
+    def p():
+        grant.next = req
+
+    return p
+
+
+@block
+def fixed_priority_arbiter_first(req, grant, higher):
+    """First fixed-priority stage: grant ``req`` and record it as higher."""
+
+    @always_comb
+    def p():
+        grant.next = req
+        higher.next = req
+
+    return p
+
+
+@block
+def fixed_priority_arbiter_stage(req, higher, grant, higher_next):
+    """A middle fixed-priority stage: grant unless a higher-priority req won."""
+
+    @always_comb
+    def p():
+        grant.next = req and (not higher)
+        higher_next.next = higher or req
+
+    return p
+
+
+@block
+def fixed_priority_arbiter_last(req, higher, grant):
+    """Last fixed-priority stage: grant unless a higher-priority request won."""
+
+    @always_comb
+    def p():
+        grant.next = req and (not higher)
+
+    return p
+
+
+@block
 def fixed_priority_arbiter(
     requests: Sequence[SignalType], grants: Sequence[SignalType]
 ):
-    """Combinational fixed-priority (lowest index wins) arbiter."""
+    """Combinational fixed-priority (lowest index wins) arbiter.
+
+    Built as a chain of per-request stages over **individual** signals (a
+    list-of-signals indexed inside a process is converted by MyHDL to an
+    invalid, continuously-assigned Verilog memory).
+    """
     n = len(requests)
     if n != len(grants):
         raise BusConfigError("requests and grants must have equal length")
     if n == 0:
         raise BusConfigError("arbiter needs at least one requester")
 
-    @always_comb
-    def logic():
-        blocked = False
-        for i in range(n):
-            grants[i].next = requests[i] and (not blocked)
-            if requests[i]:
-                blocked = True
-
-    return logic
+    proclist = []
+    higher = None
+    for i in range(n):
+        if i == n - 1:
+            if i == 0:
+                proclist.append(
+                    fixed_priority_arbiter_single(requests[i], grants[i])
+                )
+            else:
+                proclist.append(
+                    fixed_priority_arbiter_last(requests[i], higher, grants[i])
+                )
+        else:
+            higher_next = Signal(bool(0))
+            if i == 0:
+                proclist.append(
+                    fixed_priority_arbiter_first(requests[i], grants[i], higher_next)
+                )
+            else:
+                proclist.append(
+                    fixed_priority_arbiter_stage(
+                        requests[i], higher, grants[i], higher_next
+                    )
+                )
+            higher = higher_next
+    return proclist
 
 
 class FixedPriorityArbiter(ArbiterBase):
