@@ -105,14 +105,30 @@ class CSRMap:
         # engine's (byte) granularity; otherwise use whole-word writes.
         wstrb = wb.sel_i if len(wb.sel_i) == self.width // 8 else None
 
-        @always_comb
-        def map_request():
-            req.next = wb.cyc_i and wb.stb_i
-            # rebase onto the slave window; guard against negative offsets
-            if int(wb.adr_i) >= base:
-                addr.next = wb.adr_i - base
-            else:
-                addr.next = 0
+        if err_o is not None:
+
+            @always_comb
+            def map_request():
+                req.next = wb.cyc_i and wb.stb_i
+                # rebase onto the slave window; guard against negative offsets
+                if int(wb.adr_i) >= base:
+                    addr.next = wb.adr_i - base
+                else:
+                    addr.next = 0
+                # tie ERR low; driven alongside the request so the process has a
+                # non-empty sensitivity list (a constant-only @always_comb fails)
+                err_o.next = 0
+
+        else:
+
+            @always_comb
+            def map_request():
+                req.next = wb.cyc_i and wb.stb_i
+                # rebase onto the slave window; guard against negative offsets
+                if int(wb.adr_i) >= base:
+                    addr.next = wb.adr_i - base
+                else:
+                    addr.next = 0
 
         proclist = [map_request]
         proclist.append(
@@ -129,13 +145,5 @@ class CSRMap:
                 reset_active=1,
             )
         )
-
-        if err_o is not None:
-
-            @always_comb
-            def err_off():
-                err_o.next = 0
-
-            proclist.append(err_off)
 
         return proclist

@@ -34,9 +34,7 @@ def _csr_top(clk, rst, req, adr, we, dat_w, sel, busy, done, dat_r, err, rw_out)
 
     @always_comb
     def collect_strobes():
-        rw_out.next = (
-            wr_ctrl or rd_ctrl or wr_id or rd_id or wr_status or rd_status
-        )
+        rw_out.next = wr_ctrl or rd_ctrl or wr_id or rd_id or wr_status or rd_status
 
     return core, peri, glue, drive_status, collect_strobes
 
