@@ -40,8 +40,8 @@ def _reg_tb(results):
 
     @instance
     def stim():
-        ports.inputs[0].next = 0xAA
-        ports.inputs[1].next = 0xBB
+        ports.in0.next = 0xAA
+        ports.in1.next = 0xBB
         ports.sel.next = 0
         ports.reset.next = 1  # assert reset
         ports.en.next = 1

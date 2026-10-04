@@ -51,6 +51,35 @@ def mux2(sel, bit, a, b, out):
     return logic
 
 
+@block
+def build_mux_tree(sel, leaves, out, sel_bits, width):
+    """Build a balanced binary tree of 2:1 muxes over *leaves*.
+
+    ``leaves`` is a list of ``2**sel_bits`` values (signals or constants,
+    already padded); level ``k`` selects by bit ``k`` of ``sel``.  Identical
+    operands (e.g. repeated padding leaves) collapse into no mux.
+    """
+    level = leaves
+    proclist = []
+    for bit in range(sel_bits):
+        last = bit == sel_bits - 1
+        next_level = []
+        for j in range(0, len(level), 2):
+            a = level[j]
+            b = level[j + 1]
+            if last:
+                proclist.append(mux2(sel, bit, a, b, out))
+                next_level.append(out)
+            elif a is b:
+                next_level.append(a)
+            else:
+                node = Signal(intbv(0)[width:])
+                proclist.append(mux2(sel, bit, a, b, node))
+                next_level.append(node)
+        level = next_level
+    return proclist
+
+
 class MuxTree(ComponentBase):
     """Balanced binary-tree multiplexer.
 
@@ -142,23 +171,4 @@ class MuxTree(ComponentBase):
             else:  # lastinput
                 level += [ports[f"in{n - 1}"]] * padding
 
-        proclist = []
-        for bit in range(sel_bits):
-            last = bit == sel_bits - 1
-            next_level = []
-            for j in range(0, len(level), 2):
-                a = level[j]
-                b = level[j + 1]
-                if last:
-                    proclist.append(mux2(ports.sel, bit, a, b, ports.y))
-                    next_level.append(ports.y)
-                elif a is b:
-                    # identical operands (e.g. two padding leaves): no mux
-                    next_level.append(a)
-                else:
-                    node = Signal(intbv(0)[width:])
-                    proclist.append(mux2(ports.sel, bit, a, b, node))
-                    next_level.append(node)
-            level = next_level
-
-        return proclist
+        return [build_mux_tree(ports.sel, level, ports.y, sel_bits, width)]

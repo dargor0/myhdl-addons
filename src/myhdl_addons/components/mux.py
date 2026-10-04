@@ -1,8 +1,11 @@
 """Multiplexers (``IC-FR-060..069``).
 
 Two distinct components: :class:`Mux` (binary index select) and
-:class:`OneHotMux` (one-hot / OR-reduce select).  Both are convertible: a
-select process (or an OR-reduce chain) plus an optional registered stage.
+:class:`OneHotMux` (one-hot / OR-reduce select).  Both are convertible: inputs
+are exposed as individual ports ``in0 … in{n-1}`` (a tuple/list of signals is
+not convertible by MyHDL), the binary select reuses the balanced
+:func:`~myhdl_addons.components.mux_tree.build_mux_tree`, and the one-hot
+select is a chain of masked-OR stages.
 
 The two components share their configuration model, port allocation and
 registered output stage; only their ``hdl`` datapath differs.
@@ -19,6 +22,7 @@ from ..common.config import (
     mask,
 )
 from ..common.views import SignalView
+from .mux_tree import build_mux_tree
 
 __all__ = ["Mux", "OneHotMux"]
 
@@ -40,10 +44,8 @@ def _common_params(width, n, valid, registered, en, reset_value, reset_signal) -
 def _common_signals(params: dict) -> dict:
     """Allocate the signals shared by the two muxes (everything but ``sel``)."""
     width = params["width"]
-    sig = {
-        "inputs": tuple(Signal(intbv(0)[width:]) for _ in range(params["n"])),
-        "y": Signal(intbv(0)[width:]),
-    }
+    sig = {f"in{i}": Signal(intbv(0)[width:]) for i in range(params["n"])}
+    sig["y"] = Signal(intbv(0)[width:])
     if params["valid"]:
         sig["valid"] = Signal(bool(0))
     if params["registered"]:
@@ -87,6 +89,35 @@ def _bool_reg(d, q, clk, reset, en):
                 q.next = d
         else:
             q.next = False
+
+    return logic
+
+
+@block
+def onehot_stage(sel, i, first, src, value, dst):
+    """One OR-reduce stage for the one-hot mux.
+
+    Adds ``value`` to the running OR when select bit ``i`` is set.  The first
+    stage seeds the result from zero (``src`` is then unused).
+    """
+
+    if first:
+
+        @always_comb
+        def logic():
+            if sel[i]:
+                dst.next = value
+            else:
+                dst.next = 0
+
+    else:
+
+        @always_comb
+        def logic():
+            if sel[i]:
+                dst.next = src | value
+            else:
+                dst.next = src
 
     return logic
 
@@ -142,27 +173,26 @@ class Mux(ComponentBase):
         default_value = self._params["default_value"]
         valid = self._params["valid"]
         registered = self._params["registered"]
-        inputs = ports.inputs
+        sel_bits = self.sel_bits
 
-        proclist = []
         y_dst = ports.y if not registered else Signal(intbv(0)[width:])
         v_dst = None
 
-        @always(ports.sel, *inputs)
-        def mux_proc():
-            if int(ports.sel) < n:
-                y_dst.next = inputs[int(ports.sel)]
-            else:
-                y_dst.next = default_value
-
-        proclist.append(mux_proc)
+        # Balanced select tree over in0..in{n-1}, padded with default_value so
+        # every out-of-range sel code resolves to it.
+        leaves = [ports[f"in{i}"] for i in range(n)]
+        leaves += [default_value] * ((1 << sel_bits) - n)
+        proclist = [build_mux_tree(ports.sel, leaves, y_dst, sel_bits, width)]
 
         if valid:
             v_dst = ports.valid if not registered else Signal(bool(0))
 
             @always_comb
             def valid_proc():
-                v_dst.next = 1 if int(ports.sel) < n else 0
+                if int(ports.sel) < n:
+                    v_dst.next = 1
+                else:
+                    v_dst.next = 0
 
             proclist.append(valid_proc)
 
@@ -230,22 +260,20 @@ class OneHotMux(ComponentBase):
         valid = self._params["valid"]
         strict = self._params["strict"]
         registered = self._params["registered"]
-        inputs = ports.inputs
         sel = ports.sel
 
-        proclist = []
         y_dst = ports.y if not registered else Signal(intbv(0)[width:])
         v_dst = None
 
-        @always(sel, *inputs)
-        def onehot_proc():
-            result = 0
-            for i in range(n):
-                if sel[i]:
-                    result = result | inputs[i]
-            y_dst.next = result
-
-        proclist.append(onehot_proc)
+        # OR-reduce chain: y = OR_i (sel[i] ? in_i : 0)
+        proclist = []
+        cur = 0
+        for i in range(n):
+            dst = y_dst if i == n - 1 else Signal(intbv(0)[width:])
+            proclist.append(
+                onehot_stage(sel, i, i == 0, cur, ports[f"in{i}"], dst)
+            )
+            cur = dst
 
         if valid:
             v_dst = ports.valid if not registered else Signal(bool(0))
@@ -253,13 +281,22 @@ class OneHotMux(ComponentBase):
 
                 @always_comb
                 def valid_proc():
-                    v_dst.next = (sel != 0) and ((sel & (sel - 1)) == 0)
+                    if sel != 0:
+                        if (sel & (sel - 1)) == 0:
+                            v_dst.next = 1
+                        else:
+                            v_dst.next = 0
+                    else:
+                        v_dst.next = 0
 
             else:
 
                 @always_comb
                 def valid_proc():
-                    v_dst.next = sel != 0
+                    if sel != 0:
+                        v_dst.next = 1
+                    else:
+                        v_dst.next = 0
 
             proclist.append(valid_proc)
 

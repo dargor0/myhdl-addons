@@ -24,6 +24,7 @@ from ..common.config import (
 )
 from ..common.errors import HdlConfigError, HdlTypeError
 from ..common.views import SignalView
+from .mux_tree import MuxTree
 
 __all__ = [
     "AVAIL_FLAGS",
@@ -60,10 +61,11 @@ class Alu(ComponentBase):
         reset_signal: ResetSignal | None = None,
     ) -> None:
         p_width = int(check_positive(width, "width"))
-        p_ops = AVAIL_OPS if ops is None else tuple(set(ops))
-        # add NOP as required 0-index operation
-        if "NOP" not in p_ops:
-            p_ops = tuple(["NOP", *list(set(ops))])
+        # NOP is always present and always op 0.
+        if ops is None:
+            p_ops = AVAIL_OPS
+        else:
+            p_ops = tuple(["NOP", *[op for op in set(ops) if op != "NOP"]])
         p_flags = AVAIL_FLAGS if flags is None else tuple(set(flags))
         p_registered = bool(registered)
         p_en = bool(en)
@@ -123,156 +125,171 @@ class Alu(ComponentBase):
         """Elaborate the ALU onto *ports* and return its instances."""
 
         width = self._params["width"]
+        op_map = self.get_op_intmap()
 
         # Partial in/out with a bit extra for carry/overflow
         partial_a = Signal(intbv(0)[width + 1 :])
         partial_b = Signal(intbv(0)[width + 1 :])
-        partial_y = Signal(intbv(0)[width + 1 :])
 
-        # partial subops
-        partial_ops_y = tuple(
-            [Signal(intbv(0)[width + 1 :]) for _ in self._params["ops"]]
+        # The op-result select is a balanced MuxTree (one input per op), so no
+        # tuple/list of signals indexed by ``op`` (MyHDL does not convert that
+        # cleanly).  ``default_value=0`` supplies the result for an unknown op.
+        mux = MuxTree(
+            width=width + 1,
+            n=len(self._params["ops"]),
+            policy="const",
+            default_value=0,
         )
+        mux_ports = mux.ports()
+        partial_y = mux_ports.y
 
-        op_map = self.get_op_intmap()
-        op_idx_max = len(partial_ops_y)
+        proclist = [mux.hdl(mux_ports)]
 
-        partial_lt = Signal(bool(0))
-        partial_ltu = Signal(bool(0))
+        if mux.sel_bits:
 
-        proclist = []
+            @always_comb
+            def alu_op_sel():
+                mux_ports.sel.next = ports.op
+
+            proclist.append(alu_op_sel)
+
+        # Only build the signed/unsigned compare when an op or flag consumes it,
+        # so no signal is driven without a reader.
+        use_lt = ("SLT" in self._params["ops"]) or ("lt" in self._params["flags"])
+        use_ltu = ("SLTU" in self._params["ops"]) or ("ltu" in self._params["flags"])
+        partial_lt = Signal(bool(0)) if use_lt else None
+        partial_ltu = Signal(bool(0)) if use_ltu else None
+
+        # NOP (op code 0 by convention) yields zero.  Folded into inputentry
+        # because a constant-only @always_comb has an empty sensitivity list.
+        nop_y = mux_ports[f"in{op_map['NOP']}"]
 
         @always_comb
         def inputentry():
             partial_a.next = concat(intbv(0)[1:], ports.a)
             partial_b.next = concat(intbv(0)[1:], ports.b)
+            nop_y.next = 0
 
         proclist.append(inputentry)
 
         # standard operations
         if "ADD" in self._params["ops"]:
-            op_idx_add = op_map["ADD"]
+            add_y = mux_ports[f"in{op_map['ADD']}"]
 
             @always_comb
             def alu_proc_add():
-                partial_ops_y[op_idx_add].next = partial_a + partial_b
+                add_y.next = partial_a + partial_b
 
             proclist.append(alu_proc_add)
 
         if "SUB" in self._params["ops"]:
-            op_idx_sub = op_map["SUB"]
+            sub_y = mux_ports[f"in{op_map['SUB']}"]
 
             @always_comb
             def alu_proc_sub():
                 # mask so a<b wraps (MyHDL assignment forbids negatives)
-                partial_ops_y[op_idx_sub].next = (partial_a - partial_b) & (
-                    (1 << (width + 1)) - 1
-                )
+                sub_y.next = (partial_a - partial_b) & ((1 << (width + 1)) - 1)
 
             proclist.append(alu_proc_sub)
 
         if "AND" in self._params["ops"]:
-            op_idx_and = op_map["AND"]
+            and_y = mux_ports[f"in{op_map['AND']}"]
 
             @always_comb
             def alu_proc_and():
-                partial_ops_y[op_idx_and].next = partial_a & partial_b
+                and_y.next = partial_a & partial_b
 
             proclist.append(alu_proc_and)
 
         if "OR" in self._params["ops"]:
-            op_idx_or = op_map["OR"]
+            or_y = mux_ports[f"in{op_map['OR']}"]
 
             @always_comb
             def alu_proc_or():
-                partial_ops_y[op_idx_or].next = partial_a | partial_b
+                or_y.next = partial_a | partial_b
 
             proclist.append(alu_proc_or)
 
         if "XOR" in self._params["ops"]:
-            op_idx_xor = op_map["XOR"]
+            xor_y = mux_ports[f"in{op_map['XOR']}"]
 
             @always_comb
             def alu_proc_xor():
-                partial_ops_y[op_idx_xor].next = partial_a ^ partial_b
+                xor_y.next = partial_a ^ partial_b
 
             proclist.append(alu_proc_xor)
 
         if "SLT" in self._params["ops"]:
-            op_idx_slt = op_map["SLT"]
+            slt_y = mux_ports[f"in{op_map['SLT']}"]
 
             @always_comb
             def alu_proc_slt():
                 if partial_lt == 1:
-                    partial_ops_y[op_idx_slt].next = 1
+                    slt_y.next = 1
                 else:
-                    partial_ops_y[op_idx_slt].next = 0
+                    slt_y.next = 0
 
             proclist.append(alu_proc_slt)
 
         if "SLTU" in self._params["ops"]:
-            op_idx_sltu = op_map["SLTU"]
+            sltu_y = mux_ports[f"in{op_map['SLTU']}"]
 
             @always_comb
             def alu_proc_sltu():
                 if partial_ltu == 1:
-                    partial_ops_y[op_idx_sltu].next = 1
+                    sltu_y.next = 1
                 else:
-                    partial_ops_y[op_idx_sltu].next = 0
+                    sltu_y.next = 0
 
             proclist.append(alu_proc_sltu)
 
         if "PASS_A" in self._params["ops"]:
-            op_idx_pass_a = op_map["PASS_A"]
+            pass_a_y = mux_ports[f"in{op_map['PASS_A']}"]
 
             @always_comb
             def alu_proc_pass_a():
-                partial_ops_y[op_idx_pass_a].next = partial_a
+                pass_a_y.next = partial_a
 
             proclist.append(alu_proc_pass_a)
 
         if "PASS_B" in self._params["ops"]:
-            op_idx_pass_b = op_map["PASS_B"]
+            pass_b_y = mux_ports[f"in{op_map['PASS_B']}"]
 
             @always_comb
             def alu_proc_pass_b():
-                partial_ops_y[op_idx_pass_b].next = partial_b
+                pass_b_y.next = partial_b
 
             proclist.append(alu_proc_pass_b)
 
         # extra operations (if defined)
         for extra_op_name, extra_op_cb in self._extraops.items():
-            op_idx_extra = op_map[extra_op_name]
-            proclist.append(
-                extra_op_cb(partial_a, partial_b, partial_ops_y[op_idx_extra])
-            )
+            extra_y = mux_ports[f"in{op_map[extra_op_name]}"]
+            proclist.append(extra_op_cb(partial_a, partial_b, extra_y))
 
-        # NOTE: always_comb is not including signal's tuple in sensitivity list
-        # fall back to always decorator with manual sensitivity list
-        @always(ports.op, *partial_ops_y)
-        def alu_mux():
-            if int(ports.op) == 0 or int(ports.op) >= op_idx_max:
-                partial_y.next = 0
-            else:
-                partial_y.next = partial_ops_y[int(ports.op)]
+        if use_lt:
 
-        proclist.append(alu_mux)
+            @always_comb
+            def alu_lt_compute():
+                # signed compare without a helper: MyHDL turns a helper's
+                # ``return`` into a Verilog ``function`` with ``disable``, which
+                # Yosys rejects.  Compare sign bits first, then fall back.
+                if partial_a[width - 1] != partial_b[width - 1]:
+                    partial_lt.next = partial_a[width - 1]
+                else:
+                    partial_lt.next = partial_a < partial_b
 
-        @always_comb
-        def alu_lt_compute():
-            # signed compare without a helper: MyHDL turns a helper's ``return``
-            # into a Verilog ``function`` with ``disable``, which Yosys rejects.
-            # Compare the sign bits first, then fall back to unsigned.
-            if partial_a[width - 1] != partial_b[width - 1]:
-                partial_lt.next = partial_a[width - 1]
-            else:
-                partial_lt.next = partial_a < partial_b
-            if partial_a < partial_b:
-                partial_ltu.next = 1
-            else:
-                partial_ltu.next = 0
+            proclist.append(alu_lt_compute)
 
-        proclist.append(alu_lt_compute)
+        if use_ltu:
+
+            @always_comb
+            def alu_ltu_compute():
+                if partial_a < partial_b:
+                    partial_ltu.next = 1
+                else:
+                    partial_ltu.next = 0
+
+            proclist.append(alu_ltu_compute)
 
         if "carry" in self._params["flags"]:
 
@@ -311,7 +328,7 @@ class Alu(ComponentBase):
 
         if self._params["registered"]:
             en_sig = ports.en if self._params["en"] else Signal(bool(1))
-            reset_y_val = intbv(self._params["reset_value"])[width:]
+            reset_value = self._params["reset_value"] & ((1 << width) - 1)
 
             # NOTE: reset signal level and async is hardcoded to active high synchronous.
             if not isinstance(ports.reset, ResetSignal):
@@ -326,7 +343,7 @@ class Alu(ComponentBase):
                     if en_sig:
                         ports.y.next = partial_y[width:]
                 else:
-                    ports.y.next = reset_y_val
+                    ports.y.next = reset_value
 
         else:
 
