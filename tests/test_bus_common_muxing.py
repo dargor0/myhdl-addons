@@ -6,7 +6,7 @@ cosimulated and synthesised.
 """
 
 import pytest
-from myhdl import Signal, StopSimulation, always, block, delay, instance, intbv
+from myhdl import Signal, StopSimulation, block, delay, instance, intbv
 
 from myhdl_addons.bus_common.muxing import (
     fanout_gated,

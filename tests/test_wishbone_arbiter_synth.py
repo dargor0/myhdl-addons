@@ -1,7 +1,6 @@
 """Yosys synthesizability smoke test for the Wishbone arbiter (S1)."""
 
 from myhdl import Signal, intbv
-
 from test_wishbone_arbiter_conversion import _arb_top
 
 

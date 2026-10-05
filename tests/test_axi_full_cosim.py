@@ -6,9 +6,9 @@ status must match exactly.
 """
 
 from myhdl import Signal, StopSimulation, always, block, delay, instance, intbv
+from test_axi_rtl_conversion import _full_top
 
 from myhdl_addons.common.views import SignalView
-from test_axi_rtl_conversion import _full_top
 
 
 def _ports():

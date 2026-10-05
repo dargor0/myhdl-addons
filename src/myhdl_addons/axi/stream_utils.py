@@ -62,7 +62,7 @@ def axis_register_slice(
         ready_in.next = ready_out or (not valid_r)
 
     @always(clk.posedge)
-    def logic():
+    def seq():
         if not resetn:
             valid_r.next = 0
             last_r.next = 0
@@ -71,7 +71,7 @@ def axis_register_slice(
             last_r.next = last_in
             data_r.next = data_in
 
-    return outputs, logic
+    return outputs, seq
 
 
 @block
@@ -93,13 +93,13 @@ def axis_gate(
     """
 
     @always_comb
-    def logic():
+    def seq():
         data_out.next = data_in
         last_out.next = last_in
         valid_out.next = valid_in and enable
         ready_in.next = ready_out or (not enable)
 
-    return logic
+    return seq
 
 
 @block
@@ -169,7 +169,7 @@ def axis_width_down(
     n = w_in // w_out
     mask = (1 << w_out) - 1
 
-    buf = Signal(intbv(0)[w_in:])
+    buf_r = Signal(intbv(0)[w_in:])
     valid_r = Signal(bool(0))
     last_r = Signal(bool(0))
     sel = Signal(intbv(0, min=0, max=n))
@@ -177,19 +177,19 @@ def axis_width_down(
     @always_comb
     def outputs():
         valid_out.next = valid_r
-        data_out.next = (buf >> (sel * w_out)) & mask
+        data_out.next = (buf_r >> (sel * w_out)) & mask
         last_out.next = last_r and (sel == n - 1)
         ready_in.next = not valid_r
 
     @always(clk.posedge)
-    def logic():
+    def seq():
         if not resetn:
             valid_r.next = 0
             last_r.next = 0
             sel.next = 0
         elif not valid_r:
             if valid_in:
-                buf.next = data_in
+                buf_r.next = data_in
                 last_r.next = last_in
                 valid_r.next = 1
                 sel.next = 0
@@ -201,7 +201,7 @@ def axis_width_down(
             else:
                 sel.next = sel + 1
 
-    return outputs, logic
+    return outputs, seq
 
 
 @block
@@ -228,7 +228,7 @@ def axis_width_up(
     mask = (1 << w_in) - 1
     full = (1 << w_out) - 1
 
-    buf = Signal(intbv(0)[w_out:])
+    buf_r = Signal(intbv(0)[w_out:])
     valid_r = Signal(bool(0))
     last_r = Signal(bool(0))
     count = Signal(intbv(0, min=0, max=n))
@@ -236,12 +236,12 @@ def axis_width_up(
     @always_comb
     def outputs():
         valid_out.next = valid_r
-        data_out.next = buf
+        data_out.next = buf_r
         last_out.next = last_r
         ready_in.next = not valid_r
 
     @always(clk.posedge)
-    def logic():
+    def seq():
         if not resetn:
             valid_r.next = 0
             last_r.next = 0
@@ -249,7 +249,9 @@ def axis_width_up(
         elif not valid_r:
             if valid_in:
                 lane = mask << (count * w_in)
-                buf.next = (buf & (full ^ lane)) | ((data_in & mask) << (count * w_in))
+                buf_r.next = (buf_r & (full ^ lane)) | (
+                    (data_in & mask) << (count * w_in)
+                )
                 last_r.next = last_in
                 if last_in or count == n - 1:
                     valid_r.next = 1
@@ -259,9 +261,9 @@ def axis_width_up(
             valid_r.next = 0
             last_r.next = 0
             count.next = 0
-            buf.next = 0
+            buf_r.next = 0
 
-    return outputs, logic
+    return outputs, seq
 
 
 @block
@@ -277,7 +279,7 @@ def axis_packet_counter(
     """Count accepted beats and completed packets (``last``)."""
 
     @always(clk.posedge)
-    def logic():
+    def seq():
         if not resetn:
             beats.next = 0
             packets.next = 0
@@ -286,4 +288,4 @@ def axis_packet_counter(
             if last:
                 packets.next = packets + 1
 
-    return logic
+    return seq

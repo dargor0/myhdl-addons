@@ -178,15 +178,19 @@ class AxiCrossbar(AxiInterconnectBase):
         g_ij = [[Signal(bool(0)) for _ in range(ns)] for _ in range(nm)]
         active = [Signal(bool(0)) for _ in range(ns)]
         owner = [Signal(intbv(0, min=0, max=nm)) for _ in range(ns)]
-        write_r = [Signal(bool(0)) for _ in range(ns)]
-        orig_id = [Signal(intbv(0)[id_width:]) for _ in range(ns)]
+        write_r = [Signal(bool(0)) for _ in range(ns)] if is_full else None
+        orig_id = [Signal(intbv(0)[id_width:]) for _ in range(ns)] if is_full else None
         d_active = [Signal(bool(0)) for _ in range(nm)]
         d_write = [Signal(bool(0)) for _ in range(nm)]
         any_req = [Signal(bool(0)) for _ in range(ns)]
         owner_next = [Signal(intbv(0, min=0, max=nm)) for _ in range(ns)]
-        awv_owner = [Signal(bool(0)) for _ in range(ns)]
-        awid_owner = [Signal(intbv(0)[id_width:]) for _ in range(ns)]
-        arid_owner = [Signal(intbv(0)[id_width:]) for _ in range(ns)]
+        awv_owner = [Signal(bool(0)) for _ in range(ns)] if is_full else None
+        awid_owner = (
+            [Signal(intbv(0)[id_width:]) for _ in range(ns)] if is_full else None
+        )
+        arid_owner = (
+            [Signal(intbv(0)[id_width:]) for _ in range(ns)] if is_full else None
+        )
         bready_owner = [Signal(bool(0)) for _ in range(ns)]
         rready_owner = [Signal(bool(0)) for _ in range(ns)]
 
@@ -224,11 +228,6 @@ class AxiCrossbar(AxiInterconnectBase):
             )
             proclist.append(
                 select_chain(
-                    [g_ij[i][j] for i in range(nm)], m_awvalid, awv_owner[j], 0, True
-                )
-            )
-            proclist.append(
-                select_chain(
                     [g_ij[i][j] for i in range(nm)], m_bready, bready_owner[j], 0, True
                 )
             )
@@ -238,6 +237,15 @@ class AxiCrossbar(AxiInterconnectBase):
                 )
             )
             if is_full:
+                proclist.append(
+                    select_chain(
+                        [g_ij[i][j] for i in range(nm)],
+                        m_awvalid,
+                        awv_owner[j],
+                        0,
+                        True,
+                    )
+                )
                 proclist.append(
                     select_chain(
                         [g_ij[i][j] for i in range(nm)],
@@ -260,18 +268,18 @@ class AxiCrossbar(AxiInterconnectBase):
         # per-slave arbiter/served state
         for j in range(ns):
             proclist.append(
-                _state_stage(
+                state_stage(
                     ctx.aclk,
                     ctx.aresetn,
                     active[j],
                     owner[j],
-                    write_r[j],
-                    orig_id[j],
+                    write_r[j] if is_full else None,
+                    orig_id[j] if is_full else None,
                     any_req[j],
                     owner_next[j],
-                    awv_owner[j],
-                    awid_owner[j],
-                    arid_owner[j],
+                    awv_owner[j] if is_full else None,
+                    awid_owner[j] if is_full else None,
+                    arid_owner[j] if is_full else None,
                     s_bvalid[j],
                     bready_owner[j],
                     s_rvalid[j],
@@ -283,7 +291,7 @@ class AxiCrossbar(AxiInterconnectBase):
 
         for i in range(nm):
             proclist.append(
-                _default_stage(
+                default_stage(
                     ctx.aclk,
                     ctx.aresetn,
                     d_active[i],
@@ -375,13 +383,9 @@ class AxiCrossbar(AxiInterconnectBase):
                     proclist.append(
                         select_chain(grants_row, orig_id, orig_sel, id_width, False)
                     )
+                    proclist.append(select_chain(grants_row, write_r, wr_sel, 0, True))
                     proclist.append(
-                        select_chain(grants_row, write_r, wr_sel, 0, True)
-                    )
-                    proclist.append(
-                        resp_id(
-                            sel_out, orig_sel, wr_sel, m_in[name][i], int(is_write)
-                        )
+                        resp_id(sel_out, orig_sel, wr_sel, m_in[name][i], int(is_write))
                     )
                 else:
                     proclist.append(
@@ -406,7 +410,7 @@ class AxiCrossbar(AxiInterconnectBase):
 
 
 @block
-def _state_stage(
+def state_stage(
     clk,
     aresetn,
     active,
@@ -427,38 +431,54 @@ def _state_stage(
 ):
     """Per-slave arbitration/transaction state."""
 
-    @always(clk.posedge)
-    def p():
-        if not aresetn:
-            active.next = 0
-            owner.next = 0
-            write_r.next = 0
-            orig_id.next = 0
-        elif not active:
-            if any_req:
-                owner.next = owner_next
-                active.next = 1
-                write_r.next = awv_owner
-                if is_full:
+    if is_full:
+
+        @always(clk.posedge)
+        def p():
+            if not aresetn:
+                active.next = 0
+                owner.next = 0
+                write_r.next = 0
+                orig_id.next = 0
+            elif not active:
+                if any_req:
+                    owner.next = owner_next
+                    active.next = 1
+                    write_r.next = awv_owner
                     if awv_owner:
                         orig_id.next = awid_owner
                     else:
                         orig_id.next = arid_owner
-        else:
-            done = s_bvalid and bready_owner
-            if not done:
-                if is_full:
+            else:
+                done = s_bvalid and bready_owner
+                if not done:
                     done = s_rvalid and rready_owner and s_rlast
-                else:
-                    done = s_rvalid and rready_owner
-            if done:
+                if done:
+                    active.next = 0
+
+    else:
+
+        @always(clk.posedge)
+        def p():
+            if not aresetn:
                 active.next = 0
+                owner.next = 0
+            elif not active:
+                if any_req:
+                    owner.next = owner_next
+                    active.next = 1
+            else:
+                done = s_bvalid and bready_owner
+                if not done:
+                    done = s_rvalid and rready_owner
+                if done:
+                    active.next = 0
 
     return p
 
 
 @block
-def _default_stage(
+def default_stage(
     clk, aresetn, d_active, d_write, m_req, m_sel_any, m_awvalid, m_bready, m_rready
 ):
     """Per-master default-slave transaction state."""

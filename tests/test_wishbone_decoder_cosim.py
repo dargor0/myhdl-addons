@@ -5,9 +5,9 @@ bound to an equivalent ``SignalView``; both must agree.
 """
 
 from myhdl import Signal, StopSimulation, block, delay, instance, intbv
+from test_wishbone_decoder_conversion import _dec_top
 
 from myhdl_addons.common.views import SignalView
-from test_wishbone_decoder_conversion import _dec_top
 
 
 def _ports():

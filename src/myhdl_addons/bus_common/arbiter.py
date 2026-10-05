@@ -104,9 +104,7 @@ def fixed_priority_arbiter(
     for i in range(n):
         if i == n - 1:
             if i == 0:
-                proclist.append(
-                    fixed_priority_arbiter_single(requests[i], grants[i])
-                )
+                proclist.append(fixed_priority_arbiter_single(requests[i], grants[i]))
             else:
                 proclist.append(
                     fixed_priority_arbiter_last(requests[i], higher, grants[i])

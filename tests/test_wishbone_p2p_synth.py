@@ -1,7 +1,6 @@
 """Yosys synthesizability smoke test for master + slave + point-to-point (S1)."""
 
 from myhdl import Signal, intbv
-
 from test_wishbone_p2p_conversion import _p2p_top
 
 

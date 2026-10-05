@@ -474,9 +474,7 @@ class RegisterEngine:
         acc = 0
         for i in range(n):
             dst = rdata if i == n - 1 else Signal(intbv(0)[width:])
-            proclist.append(
-                engine_read_stage(matches[i], signals[i], acc, dst, i == 0)
-            )
+            proclist.append(engine_read_stage(matches[i], signals[i], acc, dst, i == 0))
             acc = dst
 
         return proclist

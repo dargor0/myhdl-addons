@@ -6,9 +6,9 @@ per-register strobes must match exactly.
 """
 
 from myhdl import Signal, StopSimulation, always, block, delay, instance, intbv
+from test_wishbone_regfile_conversion import _csr_top
 
 from myhdl_addons.common.views import SignalView
-from test_wishbone_regfile_conversion import _csr_top
 
 
 def _ports():
@@ -73,9 +73,7 @@ def _bench(make_dut, ports, results):
         ports.req.next = 0
         yield ports.clk.posedge
         yield delay(1)
-        results.append(
-            ("id1", int(ports.done), int(ports.err), int(ports.dat_r))
-        )
+        results.append(("id1", int(ports.done), int(ports.err), int(ports.dat_r)))
 
         # write CTRL (0x00) = 0xBEEF
         ports.req.next = 1
@@ -103,9 +101,7 @@ def _bench(make_dut, ports, results):
         ports.req.next = 0
         yield ports.clk.posedge
         yield delay(1)
-        results.append(
-            ("ctrl1", int(ports.done), int(ports.err), int(ports.dat_r))
-        )
+        results.append(("ctrl1", int(ports.done), int(ports.err), int(ports.dat_r)))
         raise StopSimulation
 
     return dut, clkgen, stim

@@ -279,9 +279,7 @@ class AxiSharedBus(AxiInterconnectBase):
             bool_out, width = _kind(m_out[name][0])
             if is_full and name in ("awid", "arid"):
                 proclist.append(
-                    select_chain(
-                        grants, list(range(nm)), s_out[name], id_width, False
-                    )
+                    select_chain(grants, list(range(nm)), s_out[name], id_width, False)
                 )
             else:
                 proclist.append(

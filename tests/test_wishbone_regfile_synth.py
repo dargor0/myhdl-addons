@@ -1,7 +1,6 @@
 """Yosys synthesizability smoke test for the Wishbone CSR peripheral (S1)."""
 
 from myhdl import Signal, intbv
-
 from test_wishbone_regfile_conversion import _csr_top
 
 

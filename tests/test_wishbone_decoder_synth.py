@@ -1,7 +1,6 @@
 """Yosys synthesizability smoke test for the Wishbone address decoder (S1)."""
 
 from myhdl import Signal, intbv
-
 from test_wishbone_decoder_conversion import _dec_top
 
 

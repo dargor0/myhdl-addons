@@ -7,9 +7,9 @@ command/status/strobe signals must match exactly.
 """
 
 from myhdl import Signal, StopSimulation, always, block, delay, instance, intbv
+from test_wishbone_p2p_conversion import _p2p_top
 
 from myhdl_addons.common.views import SignalView
-from test_wishbone_p2p_conversion import _p2p_top
 
 
 def _ports():

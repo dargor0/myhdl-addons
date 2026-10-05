@@ -5,6 +5,13 @@ Each closed system / utility is synthesised with the technology-independent
 """
 
 from myhdl import Signal, intbv
+from test_axi_rtl_conversion import (
+    _axis_top,
+    _full_oo_top,
+    _full_signals,
+    _full_top,
+    _lite_top,
+)
 
 from myhdl_addons.axi import (
     axis_gate,
@@ -13,13 +20,6 @@ from myhdl_addons.axi import (
     axis_register_slice,
     axis_width_down,
     axis_width_up,
-)
-from test_axi_rtl_conversion import (
-    _axis_top,
-    _full_oo_top,
-    _full_signals,
-    _full_top,
-    _lite_top,
 )
 
 

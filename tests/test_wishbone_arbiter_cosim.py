@@ -5,9 +5,9 @@ so the same bench drives either the Python block or the converted Verilog RTL.
 """
 
 from myhdl import Signal, StopSimulation, block, delay, instance, intbv
+from test_wishbone_arbiter_conversion import _arb_top
 
 from myhdl_addons.common.views import SignalView
-from test_wishbone_arbiter_conversion import _arb_top
 
 
 def _ports():
