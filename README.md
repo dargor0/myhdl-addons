@@ -5,7 +5,7 @@ A growing set of reusable, synthesizable digital-hardware building blocks writte
 
 The aim is to compose a system-on-chip from tested library blocks instead of hand-writing RTL:
 
-* **Basic components**: arithmetic/logic, muxes, registers, shifters, counters, memories, FIFOs and address decoders.
+* **Basic components**: arithmetic/logic units, multipliers, muxes, registers, shifters, counters, comparators, memories, FIFOs and address decoders.
 * **Bus implementations**: a protocol-agnostic bus layer plus Wishbone and AXI4 / AXI4-Lite / AXI4-Stream.
 * **A RISC-V core**: (in construction).
 * **Algorithm-acceleration blocks**: (in construction).
@@ -69,6 +69,7 @@ Runnable demos live under `examples/` (run any with `python examples/<name>.py`)
 | Example | Shows |
 |---|---|
 | `components_alu.py` | Using a reusable `Alu` and converting it to Verilog + VHDL. |
+| `components_multiplier.py` | Using combinational + sequential multipliers and converting them to Verilog + VHDL. |
 | `wishbone_p2p_csr.py` | A BFM master driving a Wishbone CSR over a point-to-point bus. |
 | `wishbone_shared_bus.py` | Two BFM masters reaching two CSR slaves over a shared bus. |
 | `axi_lite_csr.py` | An AXI4-Lite BFM master driving a CSR peripheral. |

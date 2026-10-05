@@ -32,10 +32,11 @@ ports = mux.ports()  # named signals: sel, in0..in{n-1}, y
 dut = mux.hdl(ports)  # MyHDL instances; simulate or instantiate
 ```
 
-`AVAIL_*` constants (`AVAIL_OPS`, `AVAIL_FLAGS`, `AVAIL_OUTPUTS`, `MODES`,
-`MODE_NAMES`, `STRUCTURES`, `PRIORITIES`, `INTERFACES`, `STREAM`, `WR_RD`,
-`WRITE_MODES`, `READ_FIRST`, `WRITE_FIRST`, `NO_CHANGE`) name the allowed
-values and are re-exported from `myhdl_addons.components`.
+`AVAIL_*` constants (`AVAIL_OPS`, `AVAIL_FLAGS`, `AVAIL_OUTPUTS`,
+`AVAIL_MUL_IMPL`, `AVAIL_DSP_TYPES`, `AVAIL_RADIX`, `MODES`, `MODE_NAMES`,
+`STRUCTURES`, `PRIORITIES`, `INTERFACES`, `STREAM`, `WR_RD`, `WRITE_MODES`,
+`READ_FIRST`, `WRITE_FIRST`, `NO_CHANGE`) name the allowed values and are
+re-exported from `myhdl_addons.components`.
 
 ---
 
@@ -138,6 +139,22 @@ default** (`ResetSignal(0, active=0, isasync=False)`); an asynchronous
   An unknown policy, or `policy=None` for non-power-of-two `n`, raises
   `HdlConfigError`.
 
+### `Multiplier` — combinational multiplier
+
+`Multiplier(width=18, signed=True, impl="dsp", dsptype=None)`
+
+- Ports: `a`, `b` (`width` bits each) and `y` (`2*width` bits, the full
+  product); purely combinational (no `clk`/`reset`).  Truncate `y` by wiring if
+  a smaller product is needed.
+- `signed` selects two's-complement (default) vs unsigned operands and result.
+- `impl` ∈ `AVAIL_MUL_IMPL` = `dsp / luts`: `dsp` (default) lets the vendor tool
+  infer an FPGA hard multiplier; `luts` is a soft partial-product array with no
+  hard-multiplier dependency (e.g. for iCE40).
+- `dsptype` (optional) ∈ `AVAIL_DSP_TYPES` = `9x9 / 18x18 / 25x18 / 27x18` names
+  the intended hard-multiplier shape (used only with `impl="dsp"`).
+- **Usage:** `y = a * b` (full precision).  To pipeline, cascade a `Register`
+  after it.
+
 ### `Decoder` — binary → one-hot
 
 `Decoder(n, en=False, registered=0, reset_value=0, reset_signal=None)`
@@ -205,6 +222,20 @@ always synchronous).
   optional `tick`.
 - **Usage:** counts within `[min, max]`; `prescaler` divides the input `en`;
   `tick` asserts at the terminal count.
+
+### `SequentialMultiplier` — shift-and-add multiplier
+
+`SequentialMultiplier(width=18, signed=True, radix=2, en=False, reset_value=0, reset_signal=None)`
+
+- Ports: `clk`, `reset`, `start`, `a`, `b` (`width` bits each), `y` (`2*width`
+  bits), `busy`, `done`; optional `en`.
+- `radix` ∈ `AVAIL_RADIX` = `2 / 4`: bits of the multiplier consumed per cycle.
+- **Usage:** pulse `start` while `busy` is low; `busy` is then high until the
+  result is ready, `done` pulses for one cycle with `y` valid (the full `a*b`
+  product, held until the next `start`).  Latency is `iterations` =
+  `ceil(width / log2(radix))` cycles (`width` for radix-2, `ceil(width/2)` for
+  radix-4); `en=0` stalls the iteration.  Reset clears `busy`/`done` and drives
+  `y = reset_value`.
 
 ### `RegisterFile` — multi-port register bank
 

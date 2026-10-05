@@ -34,6 +34,13 @@ from .fifo import (
 )
 from .incrementer import WRAP_MODES, Incrementer
 from .memory import SyncRam, SyncRom
+from .multiplier import (
+    AVAIL_DSP_TYPES,
+    AVAIL_MUL_IMPL,
+    AVAIL_RADIX,
+    Multiplier,
+    SequentialMultiplier,
+)
 from .mux import Mux, OneHotMux
 from .mux_tree import POLICIES, MuxTree
 from .regfile import (
@@ -57,9 +64,12 @@ from .shifter import (
 )
 
 __all__ = [
+    "AVAIL_DSP_TYPES",
     "AVAIL_FLAGS",
+    "AVAIL_MUL_IMPL",
     "AVAIL_OPS",
     "AVAIL_OUTPUTS",
+    "AVAIL_RADIX",
     "INTERFACES",
     "MODES",
     "MODE_NAMES",
@@ -90,12 +100,14 @@ __all__ = [
     "HdlConfigError",
     "HdlError",
     "Incrementer",
+    "Multiplier",
     "Mux",
     "MuxTree",
     "OneHotMux",
     "PriorityEncoder",
     "Register",
     "RegisterFile",
+    "SequentialMultiplier",
     "SignalView",
     "SyncRam",
     "SyncRom",
