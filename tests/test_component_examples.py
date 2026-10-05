@@ -1,4 +1,4 @@
-"""Smoke tests for the Wishbone examples (WB-FR-120)."""
+"""Smoke tests for the component examples."""
 
 import importlib.util
 import pathlib
@@ -13,9 +13,11 @@ def _load(name):
     return module
 
 
-def test_example_wishbone_p2p_csr():
-    _load("wishbone_p2p_csr").p2p_demo().run_sim()
+def test_example_components_alu():
+    _load("components_alu").alu_demo().run_sim()
 
 
-def test_example_wishbone_shared_bus():
-    _load("wishbone_shared_bus").shared_bus_demo().run_sim()
+def test_example_components_alu_convert(tmp_path):
+    out = _load("components_alu").convert_demo(tmp_path)
+    assert (out / "alu.v").exists()
+    assert (out / "alu.vhd").exists()

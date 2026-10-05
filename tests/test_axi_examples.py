@@ -23,3 +23,7 @@ def test_example_axi_crossbar():
 
 def test_example_axi_stream_pipeline():
     _load("axi_stream_pipeline").axi_stream_pipeline_demo().run_sim()
+
+
+def test_example_axi_full_burst():
+    _load("axi_full_burst").axi_full_burst_demo().run_sim()

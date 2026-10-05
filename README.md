@@ -12,7 +12,7 @@ hand-writing RTL:
   counters, memories, FIFOs and address decoders.
 * **Bus implementations** — a protocol-agnostic bus layer plus Wishbone and
   AXI4 / AXI4-Lite / AXI4-Stream.
-* **A RISC-V core** — planned (`../reqs/06_riscv_core_lib.md`).
+* **A RISC-V core** — planned.
 * **Algorithm-acceleration blocks** — planned: matrix manipulation, systolic
   arrays and neural-network primitives.
 
@@ -32,9 +32,6 @@ Packages (`src/myhdl_addons/`)
 
 Layering is one-way: `components` → `common`; `wishbone`/`axi` → `bus_common` →
 `common` (and `bus_common` may reuse `components`).  Never the reverse.
-
-The normative requirements live in `../reqs/` (`00_common_bus_lib.md` …
-`07_independent_components.md`).
 
 Quick start — a component
 -------------------------
@@ -78,6 +75,21 @@ def soc(clk, rst):
 
 Each package README shows the full interface; the bus container returns the
 fabric instances from `bus.build()` to include in your top-level `@block`.
+
+Examples
+--------
+
+Runnable demos live under `examples/` (run any with `python examples/<name>.py`):
+
+| Example | Shows |
+|---|---|
+| `components_alu.py` | Using a reusable `Alu` and converting it to Verilog + VHDL. |
+| `wishbone_p2p_csr.py` | A BFM master driving a Wishbone CSR over a point-to-point bus. |
+| `wishbone_shared_bus.py` | Two BFM masters reaching two CSR slaves over a shared bus. |
+| `axi_lite_csr.py` | An AXI4-Lite BFM master driving a CSR peripheral. |
+| `axi_crossbar.py` | Two AXI4-Lite masters reaching two CSR slaves over a crossbar. |
+| `axi_full_burst.py` | An AXI4 INCR-burst write/read against a memory slave. |
+| `axi_stream_pipeline.py` | AXI4-Stream packet source → sink. |
 
 Testing
 -------
