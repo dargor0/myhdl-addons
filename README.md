@@ -1,37 +1,25 @@
 myhdl-addons
 ============
 
-A growing set of **reusable, synthesizable** digital-hardware building blocks
-written in **MyHDL 0.11** (Python 3.10–3.14).  Runtime depends only on `myhdl`,
-and every synthesizable block converts to **Verilog and VHDL**.
+A growing set of reusable, synthesizable digital-hardware building blocks written in MyHDL 0.11 (Python 3.10–3.14). Runtime depends only on `myhdl`, and every synthesizable block converts to Verilog and VHDL.
 
-The aim is to *compose* a system-on-chip from tested library blocks instead of
-hand-writing RTL:
+The aim is to compose a system-on-chip from tested library blocks instead of hand-writing RTL:
 
-* **Basic components** — arithmetic/logic, muxes, registers, shifters,
-  counters, memories, FIFOs and address decoders.
-* **Bus implementations** — a protocol-agnostic bus layer plus Wishbone and
-  AXI4 / AXI4-Lite / AXI4-Stream.
-* **A RISC-V core** — planned.
-* **Algorithm-acceleration blocks** — planned: matrix manipulation, systolic
-  arrays and neural-network primitives.
-
-Everything builds on one shared foundation so the blocks compose cleanly and
-stay convertible.
+* **Basic components**: arithmetic/logic, muxes, registers, shifters, counters, memories, FIFOs and address decoders.
+* **Bus implementations**: a protocol-agnostic bus layer plus Wishbone and AXI4 / AXI4-Lite / AXI4-Stream.
+* **A RISC-V core**: (in construction).
+* **Algorithm-acceleration blocks**: (in construction).
 
 Packages (`src/myhdl_addons/`)
 -----------------------------
 
 | Package | What it is | Documentation |
 |---|---|---|
-| `common` | Shared foundation: unified exceptions, config validators + `ComponentBase`, `SignalView`/`connect`, reset handling. | — |
-| `components` | Independent, ISA-neutral, bus-agnostic building blocks (`Alu`, `Mux`, `MuxTree`, `BarrelShifter`, `Fifo`, …). | [`components/README.md`](src/myhdl_addons/components/README.md) |
+| `common` | Shared foundation: unified exceptions, config validators + `ComponentBase`, `SignalView`/`connect`, reset handling. |  |
+| `components` | Independent, ISA-neutral, bus-agnostic building blocks (`Alu`, `Mux`, `MuxTree`, `BarrelShifter`, `Fifo`, ...). | [`components/README.md`](src/myhdl_addons/components/README.md) |
 | `bus_common` | Protocol-agnostic bus layer (ports, containers, arbiters, address map, CSR engine, BFMs, trace). | [`bus_common/README.md`](src/myhdl_addons/bus_common/README.md) |
 | `wishbone` | Wishbone B4 (classic) bus library. | [`wishbone/README.md`](src/myhdl_addons/wishbone/README.md) |
 | `axi` | AXI4 / AXI4-Lite / AXI4-Stream library. | [`axi/README.md`](src/myhdl_addons/axi/README.md) |
-
-Layering is one-way: `components` → `common`; `wishbone`/`axi` → `bus_common` →
-`common` (and `bus_common` may reuse `components`).  Never the reverse.
 
 Quick start — a component
 -------------------------
@@ -73,9 +61,6 @@ def soc(clk, rst):
     return cpu, csr.build(s), bus.build()
 ```
 
-Each package README shows the full interface; the bus container returns the
-fabric instances from `bus.build()` to include in your top-level `@block`.
-
 Examples
 --------
 
@@ -105,12 +90,4 @@ ruff format --check src tests            # formatting
 ruff check src tests                     # linting
 ```
 
-The suite targets **≥ 85 % coverage per source file** (a floor, not the goal).
-
-Tests include **conversion** smoke tests (Verilog + VHDL) for every component,
-plus **cosimulation** and **Yosys synthesis** smoke tests for every
-synthesizable block/fabric.  The cosim/synth tests need an HDL toolchain
-(`iverilog`/`vvp` + a C compiler, and `yosys`); they **skip automatically** when
-it is absent.
-
-`legacy/` is pre-rewrite reference code and is not part of the library.
+Tests include conversion smoke tests (Verilog + VHDL) for every component, plus cosimulation (with Verilog only) and Yosys synthesis smoke tests for every synthesizable block.  The cosim/synth tests need an HDL toolchain (`iverilog`/`vvp` + a C compiler, and `yosys`); they skip automatically when tools are absent.
