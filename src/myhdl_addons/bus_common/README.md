@@ -178,9 +178,8 @@ view.alias_direction("adr", "out", "adr")  # view.adr_o is port.adr
 
 - `reset_active` selects the asserted level of `rst` at elaboration; `None`
   ignores reset entirely.
-- The RTL converts to Verilog/VHDL. MyHDL does not allow a **port** to appear
-  in a list, so inside a fabric the request/grant signals are internal (a real
-  interconnect packs its ports into vectors around the arbiter).
+- Requests/grants are parallel lists of `Signal(bool)`. Inside a fabric the
+  ports are packed into vectors and these lists are kept internal.
 
 ```python
 FixedPriorityArbiter().block(clk, rst, requests, grants)
@@ -283,17 +282,8 @@ raises `BusProtocolError` on a mismatch.
 
 ## Convertibility
 
-The synthesized blocks — `address_decoder`, the arbiters and
-`RegisterEngine` — convert to **Verilog and VHDL** (smoke-tested). Two MyHDL
-constraints shape them:
-
-- `address_decoder` reuses the independent `AddressDecoder` component (adopting
-  the caller's `adr`/`selects` signals).
-- The arbiters operate on lists of signals; MyHDL does not allow a *port* to
-  appear in a list, so in a fabric those lists are internal, with the ports
-  packed into vectors around the arbiter.
-- The CSR engine keeps its address compare and merge inside the clocked cells
-  (a combinational decode feeding the cells would sample stale data when the
-  address changes with the clock edge).
-
-BFMs, hooks and simulation checks are simulation-only and are never converted.
+All synthesizable blocks (`address_decoder`, the arbiters, `RegisterEngine`)
+convert to **Verilog and VHDL** and are smoke-tested (conversion + cosim +
+Yosys synth). The reusable elaboration-time selection/arbitration/fanout
+primitives live in `bus_common/muxing.py`. BFMs, hooks and simulation checks are
+simulation-only and are never converted.

@@ -228,15 +228,9 @@ def stim():
 
 ## Convertibility
 
-The synthesizable blocks convert to Verilog and VHDL:
-
-- `axi_full_slave`, `axi_full_slave_oo`, `axi_master`, `axi_lite_master` and
-  `AxiLiteCSR` use the convertible subset; the byte-strobe merge is a
-  ROM lookup (a tuple of ints) selected inside the clocked process.
-- The fabric strategies avoid mixed-type signal lists: each port signal gets
-  its own homogeneous per-master / per-slave list, every shared verdict is
-  driven by one small process, and list-subscripted reads use an explicit
-  `@always(*signals)` sensitivity list. The `full`/`lite` ID paths are selected
-  at elaboration.
-- `AxiBFM`, `AxiLiteBFM`, `AxiMemModel`, `protocol` and `Trace` are
-  simulation-only and are never converted.
+All synthesizable blocks (`axi_master`, `axi_full_slave`, `axi_full_slave_oo`,
+`axi_lite_master`, `AxiLiteCSR`, the stream source/sink and utilities, and
+`AxiPointToPoint` / `AxiSharedBus` / `AxiCrossbar`) convert to Verilog and VHDL
+and are smoke-tested (conversion + cosim + Yosys synth). `AxiBFM` / `AxiLiteBFM`,
+`AxiMemModel`, `protocol` and `Trace` are simulation-only and are never
+converted.

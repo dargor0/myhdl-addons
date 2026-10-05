@@ -222,13 +222,7 @@ bus.trace.signal(m.cyc_o, name="cyc", callback=lambda n, o, v, t: ...)
 
 ## Convertibility
 
-The synthesizable blocks convert to Verilog and VHDL:
-
-- `address_decoder` reuses `bus_common.AddressDecoder` (via
-  `bus_common.address_decoder`); the arbiter reuses
-  `bus_common.fixed_priority_arbiter`.
-- `wishbone_master` / `wishbone_slave` select their optional `ERR`/`RTY`
-  handling at elaboration, so each FSM body stays in the convertible subset.
-- The optional `ERR`/`RTY`/`LOCK` paths of `PointToPoint` and `SharedBus` each
-  become their own process, created only when enabled.
-- `WishboneBFM` and `Trace` are simulation-only and are never converted.
+All synthesizable blocks (`address_decoder`, the arbiter, `wishbone_master` /
+`wishbone_slave`, `PointToPoint` / `SharedBus`, `CSRMap`) convert to Verilog and
+VHDL and are smoke-tested (conversion + cosim + Yosys synth). `WishboneBFM` and
+`Trace` are simulation-only and are never converted.

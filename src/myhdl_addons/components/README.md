@@ -28,7 +28,7 @@ names (e.g. `Alu(ops=["ADD", "SUB"])`).
 from myhdl_addons.components import Mux
 
 mux = Mux(width=8, n=4)  # validated configuration
-ports = mux.ports()  # named signals: sel, inputs, y
+ports = mux.ports()  # named signals: sel, in0..in{n-1}, y
 dut = mux.hdl(ports)  # MyHDL instances; simulate or instantiate
 ```
 
@@ -107,19 +107,19 @@ default** (`ResetSignal(0, active=0, isasync=False)`); an asynchronous
 
 `Mux(width, n, default_value=0, valid=False, registered=False, en=False, reset_value=0, reset_signal=None)`
 
-- Ports: `inputs` (a tuple of `n` signals, `ports.inputs[i]`), `sel`, `y`;
-  optional `valid`; registered adds `clk`/`reset` (+`en`).
-- **Usage:** `y = inputs[sel]` while `sel < n`, otherwise `default_value`;
+- Ports: `in0 … in{n-1}` (individual named ports), `sel`, `y`; optional
+  `valid`; registered adds `clk`/`reset` (+`en`).
+- **Usage:** `y = in[sel]` while `sel < n`, otherwise `default_value`;
   `valid = (sel < n)`.  `mux.sel_bits` gives the `sel` width.
 
 ### `OneHotMux` — one-hot/OR-reduce multiplexer
 
 `OneHotMux(width, n, valid=False, strict=False, registered=False, en=False, reset_value=0, reset_signal=None)`
 
-- Ports: `inputs`, `sel` (`n` bits), `y`; optional `valid`; registered adds
-  `clk`/`reset` (+`en`).
-- **Usage:** `y` is the OR of every `inputs[i]` whose `sel[i]` is set;
-  `valid` is `sel != 0`, or with `strict=True` exactly one bit set.
+- Ports: `in0 … in{n-1}` (individual named ports), `sel` (`n` bits), `y`;
+  optional `valid`; registered adds `clk`/`reset` (+`en`).
+- **Usage:** `y` is the OR of every `in{i}` whose `sel[i]` is set; `valid` is
+  `sel != 0`, or with `strict=True` exactly one bit set.
 
 ### `MuxTree` — balanced-tree multiplexer
 

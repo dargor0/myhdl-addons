@@ -1,12 +1,104 @@
 myhdl-addons
 ============
 
-MyHDL related subprojects
+A growing set of **reusable, synthesizable** digital-hardware building blocks
+written in **MyHDL 0.11** (Python 3.10–3.14).  Runtime depends only on `myhdl`,
+and every synthesizable block converts to **Verilog and VHDL**.
 
-* cosimulation : GHDL support for co-simulation using VHPI interface.
-* conversion : VHDL convertor that keeps hierarchy
-* bus : definitions and utilities for buses. Currently only Wishbone bus support is included.
-* utils :
-  - signal_monitor.py : object for VCD generation as "signal probe"
-  - vhdl_lib.py : Base library for VHDL file management (parsing and code generation)
-  - cosim_helper.py : Testbench generator for use in GHDL co-simulation
+The aim is to *compose* a system-on-chip from tested library blocks instead of
+hand-writing RTL:
+
+* **Basic components** — arithmetic/logic, muxes, registers, shifters,
+  counters, memories, FIFOs and address decoders.
+* **Bus implementations** — a protocol-agnostic bus layer plus Wishbone and
+  AXI4 / AXI4-Lite / AXI4-Stream.
+* **A RISC-V core** — planned (`../reqs/06_riscv_core_lib.md`).
+* **Algorithm-acceleration blocks** — planned: matrix manipulation, systolic
+  arrays and neural-network primitives.
+
+Everything builds on one shared foundation so the blocks compose cleanly and
+stay convertible.
+
+Packages (`src/myhdl_addons/`)
+-----------------------------
+
+| Package | What it is | Documentation |
+|---|---|---|
+| `common` | Shared foundation: unified exceptions, config validators + `ComponentBase`, `SignalView`/`connect`, reset handling. | — |
+| `components` | Independent, ISA-neutral, bus-agnostic building blocks (`Alu`, `Mux`, `MuxTree`, `BarrelShifter`, `Fifo`, …). | [`components/README.md`](src/myhdl_addons/components/README.md) |
+| `bus_common` | Protocol-agnostic bus layer (ports, containers, arbiters, address map, CSR engine, BFMs, trace). | [`bus_common/README.md`](src/myhdl_addons/bus_common/README.md) |
+| `wishbone` | Wishbone B4 (classic) bus library. | [`wishbone/README.md`](src/myhdl_addons/wishbone/README.md) |
+| `axi` | AXI4 / AXI4-Lite / AXI4-Stream library. | [`axi/README.md`](src/myhdl_addons/axi/README.md) |
+
+Layering is one-way: `components` → `common`; `wishbone`/`axi` → `bus_common` →
+`common` (and `bus_common` may reuse `components`).  Never the reverse.
+
+The normative requirements live in `../reqs/` (`00_common_bus_lib.md` …
+`07_independent_components.md`).
+
+Quick start — a component
+-------------------------
+
+```python
+from myhdl_addons.components import Alu
+
+alu = Alu(width=8, ops=["ADD", "SUB"], flags=["zero"])
+ports = alu.ports()          # a SignalView of named signals
+dut = alu.hdl(ports)         # MyHDL instances: simulate or instantiate
+ports.a.next = 0x05
+ports.b.next = 0x03
+ports.op.next = alu.get_op_intmap()["ADD"]
+```
+
+Quick start — a bus
+-------------------
+
+```python
+from myhdl import Signal, block, intbv
+from myhdl_addons.wishbone import Wishbone, PointToPoint, wishbone_master, CSRMap
+
+@block
+def soc(clk, rst):
+    bus = Wishbone(clk, rst, data_width=32, adr_width=16, interconnect=PointToPoint())
+    m = bus.add_master("cpu")
+    s = bus.add_slave(base=0x0000, size=0x100, name="csr")
+
+    csr = CSRMap(width=32)
+    csr.add_write(0x00, "CTRL")
+    csr.add_ro(0x04, "ID", init=0xCAFE)
+
+    cpu = wishbone_master(
+        m,
+        Signal(bool(0)), Signal(intbv(0)[16:]), Signal(bool(0)),
+        Signal(intbv(0)[32:]), Signal(intbv(0)[4:]),
+        Signal(bool(0)), Signal(bool(0)), Signal(intbv(0)[32:]), Signal(bool(0)),
+    )
+    return cpu, csr.build(s), bus.build()
+```
+
+Each package README shows the full interface; the bus container returns the
+fabric instances from `bus.build()` to include in your top-level `@block`.
+
+Testing
+-------
+
+Install the development extras and run the suite:
+
+```
+pip install -e ".[dev]"
+pytest                                   # run the tests
+pytest -k alu                            # a subset (pytest selector)
+pytest --cov=myhdl_addons --cov-report=term-missing   # with coverage
+ruff format --check src tests            # formatting
+ruff check src tests                     # linting
+```
+
+The suite targets **≥ 85 % coverage per source file** (a floor, not the goal).
+
+Tests include **conversion** smoke tests (Verilog + VHDL) for every component,
+plus **cosimulation** and **Yosys synthesis** smoke tests for every
+synthesizable block/fabric.  The cosim/synth tests need an HDL toolchain
+(`iverilog`/`vvp` + a C compiler, and `yosys`); they **skip automatically** when
+it is absent.
+
+`legacy/` is pre-rewrite reference code and is not part of the library.
