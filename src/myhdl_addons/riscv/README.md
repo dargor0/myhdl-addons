@@ -43,6 +43,10 @@ cfg = CoreConfig.from_mapping(
 )
 ```
 
+Ready-made example files ship outside the package source: `config/riscv_minimal.ini`
+and `config/riscv_example.ini` (the latter loads the demo image
+`share/riscv_firmware.hex`).
+
 The full INI file schema (sections, keys, defaults, validation and a complete
 example) is in [`CONFIG.md`](CONFIG.md).
 

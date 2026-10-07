@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-import myhdl_addons.riscv as riscv
 from myhdl_addons.common import (
     BusConfigError,
     BusError,
@@ -34,9 +33,9 @@ from myhdl_addons.riscv import (
 )
 from myhdl_addons.riscv.errors import RiscvTypeError as RiscvTypeFromErrors
 
-_PKG = Path(riscv.__file__).parent
-_EXAMPLE = _PKG / "example.ini"
-_MINIMAL = _PKG / "minimal.ini"
+_CONFIG = Path(__file__).resolve().parents[1] / "config"
+_EXAMPLE = _CONFIG / "riscv_example.ini"
+_MINIMAL = _CONFIG / "riscv_minimal.ini"
 
 
 def _core(**over):
