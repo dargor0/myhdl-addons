@@ -107,9 +107,7 @@ def _run(vectors):
 
 
 def test_lsu_matches_reference():
-    for (addr, wdata, rdata, size, zero_extend), got in zip(
-        _VECTORS, _run(_VECTORS)
-    ):
+    for (addr, wdata, rdata, size, zero_extend), got in zip(_VECTORS, _run(_VECTORS)):
         load, store, strobe, misaligned = got
         assert load == _load_ref(rdata, addr, size, zero_extend), (
             hex(addr),

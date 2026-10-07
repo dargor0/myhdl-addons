@@ -14,6 +14,7 @@ boundary checks via ``validate()``.  The RTL blocks and the assembled
 ``RiscvCore`` are added incrementally.
 """
 
+from .branch import AVAIL_BRANCH_OPS, BranchUnit, jalr_target
 from .config import (
     AVAIL_ACCESS,
     AVAIL_BASES,
@@ -27,7 +28,6 @@ from .config import (
     MISA_BITS,
     CoreConfig,
 )
-from .branch import AVAIL_BRANCH_OPS, BranchUnit, jalr_target
 from .decoder import InstructionDecoder
 from .errors import RiscvConfigError, RiscvError, RiscvTypeError
 from .extensions import Extension, ExtensionRegistry

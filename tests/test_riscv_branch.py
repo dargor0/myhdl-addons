@@ -29,9 +29,7 @@ def _reference(a, b, name, width):
 
 
 _VALUES = (0x00, 0x01, 0x7F, 0x80, 0xFF)
-_VECTORS = [
-    (a, b, name) for a in _VALUES for b in _VALUES for name in AVAIL_BRANCH_OPS
-]
+_VECTORS = [(a, b, name) for a in _VALUES for b in _VALUES for name in AVAIL_BRANCH_OPS]
 
 
 @block
@@ -164,8 +162,15 @@ def _jalr_multi_tb(results, addrs):
 
 
 def test_jalr_target_various():
-    addrs = [0x00000000, 0x00000001, 0x00000002, 0x00000003,
-             0xFFFFFFFD, 0xFFFFFFFF, 0x80000001]
+    addrs = [
+        0x00000000,
+        0x00000001,
+        0x00000002,
+        0x00000003,
+        0xFFFFFFFD,
+        0xFFFFFFFF,
+        0x80000001,
+    ]
     results = []
     _jalr_multi_tb(results, addrs).run_sim()
     assert results == [addr & 0xFFFFFFFE for addr in addrs]
