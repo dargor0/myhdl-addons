@@ -140,6 +140,125 @@ class FixedPriorityArbiter(ArbiterBase):
 
 
 @block
+def rr_gated_ge(req, ptr, index, out):
+    """Rotation gate: ``out = req and (ptr <= index)`` (at/after the pointer)."""
+
+    @always_comb
+    def p():
+        out.next = req and (ptr <= index)
+
+    return p
+
+
+@block
+def rr_gated_lt(req, ptr, index, out):
+    """Rotation gate: ``out = req and (ptr > index)`` (before the pointer)."""
+
+    @always_comb
+    def p():
+        out.next = req and (ptr > index)
+
+    return p
+
+
+@block
+def rr_grant(hi_win, lo_win, any_hi, out):
+    """Grant the high-group winner, else the low-group winner."""
+
+    @always_comb
+    def p():
+        out.next = hi_win or (lo_win and (not any_hi))
+
+    return p
+
+
+@block
+def rr_next(grant, value, out):
+    """One-hot next-pointer contribution: *value* when granted, else ``0``."""
+
+    @always_comb
+    def p():
+        if grant:
+            out.next = value
+        else:
+            out.next = 0
+
+    return p
+
+
+@block
+def rr_or_first(value, out):
+    """First stage of an OR reduction."""
+
+    @always_comb
+    def p():
+        out.next = value
+
+    return p
+
+
+@block
+def rr_or_stage(value, acc, out):
+    """Later stage of an OR reduction."""
+
+    @always_comb
+    def p():
+        out.next = acc | value
+
+    return p
+
+
+@block
+def rr_output(grant, rst, reset_active, out):
+    """Combinational grant output, forced low while reset is asserted.
+
+    Grants are driven combinationally from the registered pointer (not
+    captured on the edge): this keeps the winner visible in the same cycle and
+    avoids racing the combinational priority decode at the clock edge.
+    """
+
+    if reset_active is None:
+
+        @always_comb
+        def p():
+            out.next = grant
+
+    else:
+
+        @always_comb
+        def p():
+            if rst == reset_active:
+                out.next = 0
+            else:
+                out.next = grant
+
+    return p
+
+
+@block
+def rr_reg_ptr(clk, rst, reset_active, any_grant, ptr_next, q):
+    """Registered rotating pointer; holds when no request is granted."""
+
+    if reset_active is None:
+
+        @always(clk.posedge)
+        def p():
+            if any_grant:
+                q.next = ptr_next
+
+    else:
+
+        @always(clk.posedge)
+        def p():
+            if rst == reset_active:
+                q.next = 0
+            elif any_grant:
+                q.next = ptr_next
+
+    return p
+
+
+@block
 def round_robin_arbiter(
     clk: SignalType | None,
     rst: SignalType | None,
@@ -148,6 +267,10 @@ def round_robin_arbiter(
     reset_active: int | None = 1,
 ):
     """Registered round-robin arbiter with a rotating priority pointer.
+
+    Convertible by construction: the rotation gates, the two priority chains
+    and the pointer update are elaborated **per requester over individual
+    signals**, so no list-of-signals is ever indexed inside a process.
 
     *reset_active* selects the asserted level of *rst*; pass ``None`` to
     ignore the reset entirely (the common layer does not assume a polarity).
@@ -159,43 +282,63 @@ def round_robin_arbiter(
         raise BusConfigError("arbiter needs at least one requester")
 
     ptr = Signal(intbv(0, min=0, max=n))
+    procs = []
 
-    # NOTE: reset handling is selected at elaboration so no free-form
-    # ``reset_active is not None`` test reaches the converter.
-    if reset_active is None:
+    # Split the requests into the "at/after the pointer" and "before the
+    # pointer" rotation groups and run a fixed-priority chain over each.
+    hi = [Signal(bool(0)) for _ in range(n)]
+    lo = [Signal(bool(0)) for _ in range(n)]
+    for i in range(n):
+        procs.append(rr_gated_ge(requests[i], ptr, i, hi[i]))
+        procs.append(rr_gated_lt(requests[i], ptr, i, lo[i]))
 
-        @always(clk.posedge)
-        def logic():
-            granted = False
-            for i in range(n):
-                idx = (ptr + i) % n
-                if requests[idx] and (not granted):
-                    grants[idx].next = 1
-                    granted = True
-                    ptr.next = (idx + 1) % n
-                else:
-                    grants[idx].next = 0
+    hi_win = [Signal(bool(0)) for _ in range(n)]
+    lo_win = [Signal(bool(0)) for _ in range(n)]
+    procs.append(fixed_priority_arbiter(hi, hi_win))
+    procs.append(fixed_priority_arbiter(lo, lo_win))
 
-    else:
+    any_hi = Signal(bool(0))
+    acc = None
+    for i in range(n):
+        dst = any_hi if i == n - 1 else Signal(bool(0))
+        procs.append(
+            rr_or_first(hi[i], dst) if acc is None else rr_or_stage(hi[i], acc, dst)
+        )
+        acc = dst
 
-        @always(clk.posedge)
-        def logic():
-            if rst == reset_active:
-                ptr.next = 0
-                for i in range(n):
-                    grants[i].next = 0
-            else:
-                granted = False
-                for i in range(n):
-                    idx = (ptr + i) % n
-                    if requests[idx] and (not granted):
-                        grants[idx].next = 1
-                        granted = True
-                        ptr.next = (idx + 1) % n
-                    else:
-                        grants[idx].next = 0
+    grant_comb = [Signal(bool(0)) for _ in range(n)]
+    for i in range(n):
+        procs.append(rr_grant(hi_win[i], lo_win[i], any_hi, grant_comb[i]))
 
-    return logic
+    any_grant = Signal(bool(0))
+    acc = None
+    for i in range(n):
+        dst = any_grant if i == n - 1 else Signal(bool(0))
+        procs.append(
+            rr_or_first(grant_comb[i], dst)
+            if acc is None
+            else rr_or_stage(grant_comb[i], acc, dst)
+        )
+        acc = dst
+
+    next_parts = [Signal(intbv(0, min=0, max=n)) for _ in range(n)]
+    for i in range(n):
+        procs.append(rr_next(grant_comb[i], (i + 1) % n, next_parts[i]))
+    ptr_next = Signal(intbv(0, min=0, max=n))
+    acc = None
+    for i in range(n):
+        dst = ptr_next if i == n - 1 else Signal(intbv(0, min=0, max=n))
+        procs.append(
+            rr_or_first(next_parts[i], dst)
+            if acc is None
+            else rr_or_stage(next_parts[i], acc, dst)
+        )
+        acc = dst
+
+    for i in range(n):
+        procs.append(rr_output(grant_comb[i], rst, reset_active, grants[i]))
+    procs.append(rr_reg_ptr(clk, rst, reset_active, any_grant, ptr_next, ptr))
+    return procs
 
 
 class RoundRobinArbiter(ArbiterBase):

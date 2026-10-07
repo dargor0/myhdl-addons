@@ -39,10 +39,22 @@ _PORT_RE = re.compile(
 )
 
 
-def convert_verilog(dut, path, name):
-    """Convert an elaborated block to Verilog and return the ``.v`` path."""
+def convert_verilog(dut, path, name, initial_values=False):
+    """Convert an elaborated block to Verilog and return the ``.v`` path.
+
+    ``initial_values`` selects whether the converted Verilog emits signal/memory
+    power-on values (MyHDL writes them for read-only memories regardless).  It
+    is passed explicitly so the converter's global setting never leaks between
+    calls.
+    """
     out = Path(path) / f"{name}.v"
-    dut.convert(hdl="Verilog", path=str(path), name=name, testbench=False)
+    dut.convert(
+        hdl="Verilog",
+        path=str(path),
+        name=name,
+        testbench=False,
+        initial_values=initial_values,
+    )
     if not out.exists():
         raise CosimUnavailable(f"conversion did not produce {out}")
     return out
@@ -227,11 +239,11 @@ def build_vpi(build_dir):
     return vpi
 
 
-def make_cosim(dut, ports, path, name, vpi):
+def make_cosim(dut, ports, path, name, vpi, initial_values=False):
     """Convert ``dut`` and return a ``Cosimulation`` bound to ``ports``."""
     _require("iverilog", "vvp")
     path = Path(path)
-    dut_v = convert_verilog(dut, path, name)
+    dut_v = convert_verilog(dut, path, name, initial_values=initial_values)
     module_name, parsed = parse_module(dut_v)
     tb_v = path / f"tb_{name}.v"
     write_wrapper(tb_v, module_name, parsed)
@@ -302,11 +314,22 @@ def convert_dut(tmp_path):
     discarded automatically; only success/failure of the conversion matters.
     """
 
-    def _convert(dut, hdl, name):
+    def _convert(dut, hdl, name, initial_values=False):
         if hdl == "Verilog":
-            dut.convert(hdl="Verilog", path=str(tmp_path), name=name, testbench=False)
+            dut.convert(
+                hdl="Verilog",
+                path=str(tmp_path),
+                name=name,
+                testbench=False,
+                initial_values=initial_values,
+            )
         else:
-            dut.convert(hdl="VHDL", path=str(tmp_path), name=name)
+            dut.convert(
+                hdl="VHDL",
+                path=str(tmp_path),
+                name=name,
+                initial_values=initial_values,
+            )
 
     return _convert
 
@@ -332,8 +355,15 @@ def hdl_cosim(_hdl_toolchain, tmp_path):
     if _hdl_toolchain["vpi"] is None:
         pytest.skip("verilog cosimulation toolchain (iverilog + myhdl.vpi) unavailable")
 
-    def _make(dut, ports, name):
-        return make_cosim(dut, ports, tmp_path, name, _hdl_toolchain["vpi"])
+    def _make(dut, ports, name, initial_values=False):
+        return make_cosim(
+            dut,
+            ports,
+            tmp_path,
+            name,
+            _hdl_toolchain["vpi"],
+            initial_values=initial_values,
+        )
 
     return _make
 

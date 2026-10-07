@@ -4,8 +4,8 @@
 to components, buses or any other sub-package:
 
 * :mod:`~myhdl_addons.common.errors` — the single, unified exception
-  hierarchy (``HdlError`` and its ``Bus``/``Wishbone``/``Axi``/component
-  descendants);
+  hierarchy (``HdlError`` and its ``Bus``/``Wishbone``/``Axi``/``Riscv``/
+  component descendants);
 * :mod:`~myhdl_addons.common.config` — generic elaboration-time validators
   and the :class:`ComponentBase` introspection protocol;
 * :mod:`~myhdl_addons.common.views` — the protocol-agnostic
@@ -45,6 +45,9 @@ from .errors import (
     HdlError,
     HdlProtocolError,
     HdlTypeError,
+    RiscvConfigError,
+    RiscvError,
+    RiscvTypeError,
     WishboneConfigError,
     WishboneError,
     WishboneTypeError,
@@ -66,6 +69,9 @@ __all__ = [
     "HdlError",
     "HdlProtocolError",
     "HdlTypeError",
+    "RiscvConfigError",
+    "RiscvError",
+    "RiscvTypeError",
     "SignalView",
     "WishboneConfigError",
     "WishboneError",

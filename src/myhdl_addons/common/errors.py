@@ -8,19 +8,21 @@ to look for and to extend the hierarchy::
     ├── HdlConfigError
     │   └── BusConfigError
     │       ├── WishboneConfigError
-    │       └── AxiConfigError
+    │       ├── AxiConfigError
+    │       └── RiscvConfigError
     ├── HdlTypeError
     │   └── BusTypeError
     │       ├── WishboneTypeError
-    │       └── AxiTypeError
+    │       ├── AxiTypeError
+    │       └── RiscvTypeError
     └── HdlProtocolError
         └── BusProtocolError
             └── AxiProtocolError
 
 Each per-library error *also* inherits from a library base
-(``WishboneError`` / ``AxiError``), so callers may catch either the generic
-category (e.g. ``HdlConfigError``), the bus category (``BusConfigError``) or
-the library category (``WishboneConfigError``).
+(``WishboneError`` / ``AxiError`` / ``RiscvError``), so callers may catch
+either the generic category (e.g. ``HdlConfigError``), the bus category
+(``BusConfigError``) or the library category (``WishboneConfigError``).
 """
 
 __all__ = [
@@ -37,6 +39,9 @@ __all__ = [
     "HdlError",
     "HdlProtocolError",
     "HdlTypeError",
+    "RiscvConfigError",
+    "RiscvError",
+    "RiscvTypeError",
     "WishboneConfigError",
     "WishboneError",
     "WishboneTypeError",
@@ -101,6 +106,18 @@ class AxiTypeError(BusTypeError, AxiError):
 
 class AxiProtocolError(BusProtocolError, AxiError):
     """An AXI protocol assertion failed (simulation time)."""
+
+
+class RiscvError(BusError):
+    """Base class for RISC-V core library errors (``RC-FR-008``)."""
+
+
+class RiscvConfigError(BusConfigError, RiscvError):
+    """Invalid RISC-V core configuration (elaboration time)."""
+
+
+class RiscvTypeError(BusTypeError, RiscvError):
+    """A RISC-V signal/port object has an unexpected MyHDL type."""
 
 
 #: The type of an exception *class* deriving from :class:`HdlError`.  Usable as

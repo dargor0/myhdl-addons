@@ -36,23 +36,21 @@ def fifo_reset(reset, flush, reset_sig, has_flush):
     """Combine the synchronous reset and optional flush into one reset signal."""
     active = int(reset.active)
 
+    # A single unconditional assignment converts to a continuous `assign`
+    # (evaluated at time 0).  An `if/else` would become an edge-sensitive
+    # `always @(reset)`, which never fires when reset starts already asserted,
+    # leaving `reset_sig` undefined (x) until the first reset transition.
     if has_flush:
 
         @always_comb
         def p():
-            if (reset == active) or flush:
-                reset_sig.next = 1
-            else:
-                reset_sig.next = 0
+            reset_sig.next = (reset == active) or flush
 
     else:
 
         @always_comb
         def p():
-            if reset == active:
-                reset_sig.next = 1
-            else:
-                reset_sig.next = 0
+            reset_sig.next = reset == active
 
     return p
 
@@ -69,10 +67,32 @@ def fifo_head(mem, rptr, head):
 
 
 @block
-def fifo_pre(fall_through, empty, head, rdata_reg, rvalid_reg, pre_data, pre_valid):
-    """Select the read-side data/valid before the optional output register."""
+def fifo_pre(
+    fall_through, empty, head, rdata_reg, rvalid_reg, pre_data, pre_valid, need_valid
+):
+    """Select the read-side data/valid before the optional output register.
 
-    if fall_through:
+    ``pre_valid`` is only driven in ``stream`` mode, where it is actually
+    consumed; otherwise it would be a driven-but-unread signal.
+    """
+
+    if not need_valid:
+        if fall_through:
+
+            @always_comb
+            def p():
+                if empty:
+                    pre_data.next = rdata_reg
+                else:
+                    pre_data.next = head
+
+        else:
+
+            @always_comb
+            def p():
+                pre_data.next = rdata_reg
+
+    elif fall_through:
 
         @always_comb
         def p():
@@ -210,35 +230,48 @@ def fifo_rdreg(
                     rvalid_reg.next = 0
 
     else:
+        # native (non-fall-through) read: no valid flag is consumed
 
         @always(clk.posedge)
         def p():
             if reset_sig:
                 rdata_reg.next = 0
-                rvalid_reg.next = 0
             else:
                 if do_rd:
                     rdata_reg.next = head
-                rvalid_reg.next = 0
 
     return p
 
 
 @block
-def fifo_outreg(clk, reset_sig, pre_data, pre_valid, out_data, out_valid):
-    """Optional output register stage (breaks the read path)."""
+def fifo_outreg(clk, reset_sig, pre_data, pre_valid, out_data, out_valid, need_valid):
+    """Optional output register stage (breaks the read path).
 
-    @always(clk.posedge)
-    def p():
-        if reset_sig:
-            out_data.next = 0
-            out_valid.next = 0
-        else:
-            out_data.next = pre_data
-            if pre_valid:
-                out_valid.next = 1
-            else:
+    ``out_valid`` is only driven in stream mode, where it is consumed.
+    """
+
+    if need_valid:
+
+        @always(clk.posedge)
+        def p():
+            if reset_sig:
+                out_data.next = 0
                 out_valid.next = 0
+            else:
+                out_data.next = pre_data
+                if pre_valid:
+                    out_valid.next = 1
+                else:
+                    out_valid.next = 0
+
+    else:
+
+        @always(clk.posedge)
+        def p():
+            if reset_sig:
+                out_data.next = 0
+            else:
+                out_data.next = pre_data
 
     return p
 
@@ -382,6 +415,7 @@ class Fifo(ComponentBase):
                 rvalid_reg,
                 pre_data,
                 pre_valid,
+                stream,
             )
         )
         proclist.append(
@@ -433,7 +467,13 @@ class Fifo(ComponentBase):
             out_valid = Signal(bool(0))
             proclist.append(
                 fifo_outreg(
-                    ports.clk, reset_sig, pre_data, pre_valid, out_data, out_valid
+                    ports.clk,
+                    reset_sig,
+                    pre_data,
+                    pre_valid,
+                    out_data,
+                    out_valid,
+                    stream,
                 )
             )
             data_src = out_data

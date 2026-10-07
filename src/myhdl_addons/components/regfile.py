@@ -67,15 +67,66 @@ def rf_base(mem, raddr, base, depth, zero_reg, zero_fix):
 
 
 @block
-def rf_bypass(base, dst, raddr, we, waddr, wvalue, nwrite):
-    """Write-first bypass: shadow ``base`` with a matching write value."""
+def rf_bypass_stage(prev, we, waddr, wvalue, raddr, out):
+    """One write port of the write-first bypass chain."""
 
     @always_comb
     def p():
-        dst.next = base
-        for j in range(nwrite):
-            if we[j] and waddr[j] == raddr:
-                dst.next = wvalue[j]
+        if we and waddr == raddr:
+            out.next = wvalue
+        else:
+            out.next = prev
+
+    return p
+
+
+@block
+def rf_bypass(base, dst, raddr, we, waddr, wvalue, nwrite):
+    """Write-first bypass: shadow ``base`` with a matching write value.
+
+    Built as an elaboration-time chain over the individual write-port signals,
+    so no tuple of signals is ever indexed inside a process (the pattern that
+    makes Yosys emit an undeclared memory).
+    """
+    width = len(dst)
+    procs = []
+    acc = base
+    for j in range(nwrite):
+        out = dst if j == nwrite - 1 else Signal(intbv(0)[width:])
+        procs.append(rf_bypass_stage(acc, we[j], waddr[j], wvalue[j], raddr, out))
+        acc = out
+    return procs
+
+
+@block
+def rf_hit_stage(we, waddr, raddr, out):
+    """One write port of the blocked-address OR chain."""
+
+    @always_comb
+    def p():
+        out.next = we and (waddr == raddr)
+
+    return p
+
+
+@block
+def rf_or_first(bit, out):
+    """First stage of the blocked-address OR reduction."""
+
+    @always_comb
+    def p():
+        out.next = bit
+
+    return p
+
+
+@block
+def rf_or_stage(bit, acc, out):
+    """Later stage of the blocked-address OR reduction."""
+
+    @always_comb
+    def p():
+        out.next = acc or bit
 
     return p
 
@@ -83,16 +134,18 @@ def rf_bypass(base, dst, raddr, we, waddr, wvalue, nwrite):
 @block
 def rf_blocked(raddr, we, waddr, blocked, nwrite):
     """Flag whether any write port targets the read address this cycle."""
-
-    @always_comb
-    def p():
-        hit = 0
-        for j in range(nwrite):
-            if we[j] and waddr[j] == raddr:
-                hit = 1
-        blocked.next = hit != 0
-
-    return p
+    procs = []
+    acc = None
+    for j in range(nwrite):
+        bit = Signal(bool(0))
+        procs.append(rf_hit_stage(we[j], waddr[j], raddr, bit))
+        dst = blocked if j == nwrite - 1 else Signal(bool(0))
+        if acc is None:
+            procs.append(rf_or_first(bit, dst))
+        else:
+            procs.append(rf_or_stage(bit, acc, dst))
+        acc = dst
+    return procs
 
 
 @block
@@ -192,14 +245,19 @@ def rf_wr_port(
 
 @block
 def rf_old(mem, waddr, old, depth):
-    """Read the current memory word (for byte-strobe merging)."""
+    """Read the current memory word (for byte-strobe merging).
+
+    A single unconditional assignment converts to a continuous ``assign``
+    (evaluated at time 0); an ``if/else`` would become an edge-sensitive
+    ``always @(waddr)`` that never fires while ``waddr`` holds its power-on
+    value, leaving ``old`` undefined and poisoning the first byte-written word.
+    The read is unguarded because the value is only consumed when the write
+    port's in-range guard actually enables the write.
+    """
 
     @always_comb
     def p():
-        if waddr < depth:
-            old.next = mem[waddr]
-        else:
-            old.next = 0
+        old.next = mem[waddr]
 
     return p
 

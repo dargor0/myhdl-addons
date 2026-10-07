@@ -1,6 +1,6 @@
 """SyncRam read/write, latency and write modes (``IC-FR-100..107``)."""
 
-from myhdl import StopSimulation, always, block, delay, instance
+from myhdl import Signal, StopSimulation, always, block, delay, instance
 
 from myhdl_addons.components import WRITE_FIRST, SyncRam
 
@@ -10,6 +10,8 @@ def _ram_tb(results, config, actions):
     ram = SyncRam(**config)
     ports = ram.ports()
     dut = ram.hdl(ports)
+    # `reset` is only exposed when a read/output stage exists (IC-FR-100)
+    reset = ports["reset"] if "reset" in ports else Signal(bool(0))
 
     @always(delay(5))
     def clkgen():
@@ -17,9 +19,9 @@ def _ram_tb(results, config, actions):
 
     @instance
     def stim():
-        ports.reset.next = 0
+        reset.next = 0
         yield ports.clk.posedge
-        ports.reset.next = 1
+        reset.next = 1
         for action in actions:
             for name, value in action.get("set", {}).items():
                 getattr(ports, name).next = value

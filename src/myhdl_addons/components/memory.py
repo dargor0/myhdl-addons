@@ -111,7 +111,14 @@ class SyncRam(ComponentBase):
         write_ports = self._params["write_ports"]
         read_ports = self._params["read_ports"]
         lanes = width // 8
-        sig = {"clk": Signal(bool(0)), "reset": self._params["reset_signal"]}
+        stages = self._params["read_latency"] + (
+            1 if self._params["output_register"] else 0
+        )
+        # `clk` is always needed (synchronous writes); `reset` only resets the
+        # read/output stages, so expose it only when a stage exists.
+        sig = {"clk": Signal(bool(0))}
+        if stages:
+            sig["reset"] = self._params["reset_signal"]
         for p in range(write_ports):
             sig[f"we{p}"] = Signal(bool(0))
             sig[f"waddr{p}"] = Signal(intbv(0, min=0, max=1 << addr_bits))
@@ -177,7 +184,7 @@ class SyncRam(ComponentBase):
                 rf_wr_port(
                     mem,
                     ports.clk,
-                    ports.reset,
+                    None,  # SyncRam never resets contents (IC-FR-104)
                     ports[f"we{p}"],
                     ports[f"waddr{p}"],
                     wvalue[p],
@@ -276,7 +283,14 @@ class SyncRom(ComponentBase):
         """Allocate and return the component interface."""
         width = self._params["width"]
         addr_bits = self._params["addr_bits"]
-        sig = {"clk": Signal(bool(0)), "reset": self._params["reset_signal"]}
+        stages = self._params["read_latency"] + (
+            1 if self._params["output_register"] else 0
+        )
+        # Purely combinational when no read stage exists: no clock/reset then.
+        sig = {}
+        if stages:
+            sig["clk"] = Signal(bool(0))
+            sig["reset"] = self._params["reset_signal"]
         for p in range(self._params["read_ports"]):
             sig[f"raddr{p}"] = Signal(intbv(0, min=0, max=1 << addr_bits))
             sig[f"rdata{p}"] = Signal(intbv(0)[width:])

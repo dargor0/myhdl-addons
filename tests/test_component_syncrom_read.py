@@ -1,6 +1,6 @@
 """SyncRom read behaviour (``IC-FR-140..144``)."""
 
-from myhdl import StopSimulation, always, block, delay, instance
+from myhdl import Signal, StopSimulation, always, block, delay, instance
 
 from myhdl_addons.components import SyncRom
 
@@ -10,21 +10,24 @@ def _rom_tb(results, config, actions):
     rom = SyncRom(**config)
     ports = rom.ports()
     dut = rom.hdl(ports)
+    # `clk`/`reset` only exist when a read/output stage exists (IC-FR-140)
+    clk = ports["clk"] if "clk" in ports else Signal(bool(0))
+    reset = ports["reset"] if "reset" in ports else Signal(bool(0))
 
     @always(delay(5))
     def clkgen():
-        ports.clk.next = not ports.clk
+        clk.next = not clk
 
     @instance
     def stim():
-        ports.reset.next = 0
-        yield ports.clk.posedge
-        ports.reset.next = 1
+        reset.next = 0
+        yield clk.posedge
+        reset.next = 1
         for action in actions:
             for name, value in action.get("set", {}).items():
                 getattr(ports, name).next = value
             if action.get("edge"):
-                yield ports.clk.posedge
+                yield clk.posedge
             yield delay(1)
             if "sample" in action:
                 results.append(tuple(int(ports[n]) for n in action["sample"]))

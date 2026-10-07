@@ -7,7 +7,7 @@ The aim is to compose a system-on-chip from tested library blocks instead of han
 
 * **Basic components**: arithmetic/logic units, multipliers, muxes, registers, shifters, counters, comparators, memories, FIFOs and address decoders.
 * **Bus implementations**: a protocol-agnostic bus layer plus Wishbone and AXI4 / AXI4-Lite / AXI4-Stream.
-* **A RISC-V core**: (in construction).
+* **A RISC-V core**: RV32I + the C extension, microcontroller class (in construction).
 * **Algorithm-acceleration blocks**: (in construction).
 
 Packages (`src/myhdl_addons/`)
@@ -20,6 +20,7 @@ Packages (`src/myhdl_addons/`)
 | `bus_common` | Protocol-agnostic bus layer (ports, containers, arbiters, address map, CSR engine, BFMs, trace). | [`bus_common/README.md`](src/myhdl_addons/bus_common/README.md) |
 | `wishbone` | Wishbone B4 (classic) bus library. | [`wishbone/README.md`](src/myhdl_addons/wishbone/README.md) |
 | `axi` | AXI4 / AXI4-Lite / AXI4-Stream library. | [`axi/README.md`](src/myhdl_addons/axi/README.md) |
+| `riscv` | RV32I + C (compressed) microcontroller-class core. | [`riscv/README.md`](src/myhdl_addons/riscv/README.md) |
 
 Quick start — a component
 -------------------------
