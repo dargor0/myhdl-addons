@@ -27,10 +27,13 @@ from .config import (
     MISA_BITS,
     CoreConfig,
 )
+from .branch import AVAIL_BRANCH_OPS, BranchUnit, jalr_target
 from .decoder import InstructionDecoder
 from .errors import RiscvConfigError, RiscvError, RiscvTypeError
 from .extensions import Extension, ExtensionRegistry
 from .immgen import AVAIL_IMM_TYPES, ImmGen
+from .lsu import LoadStoreUnit
+from .pc import ProgramCounter
 from .rvc import (
     CExtension,
     RvcDecompressor,
@@ -38,10 +41,12 @@ from .rvc import (
     default_registry,
     is_compressed,
 )
+from .tohost import ToHost
 
 __all__ = [
     "AVAIL_ACCESS",
     "AVAIL_BASES",
+    "AVAIL_BRANCH_OPS",
     "AVAIL_BUS_TYPES",
     "AVAIL_EXTENSIONS",
     "AVAIL_FETCH_BUFFER",
@@ -51,17 +56,22 @@ __all__ = [
     "AVAIL_PERMS",
     "AVAIL_PIPELINE_STAGES",
     "MISA_BITS",
+    "BranchUnit",
     "CExtension",
     "CoreConfig",
     "Extension",
     "ExtensionRegistry",
     "ImmGen",
     "InstructionDecoder",
+    "LoadStoreUnit",
+    "ProgramCounter",
     "RiscvConfigError",
     "RiscvError",
     "RiscvTypeError",
     "RvcDecompressor",
+    "ToHost",
     "decompress",
     "default_registry",
     "is_compressed",
+    "jalr_target",
 ]

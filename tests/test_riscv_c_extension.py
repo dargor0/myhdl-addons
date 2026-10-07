@@ -59,6 +59,12 @@ def test_is_compressed_marks_sixteen_bit_encodings():
     assert is_compressed(0x00000033) is False  # add
 
 
+def test_is_compressed_exhaustive():
+    # 16-bit iff the low two bits are not 0b11
+    for instr in range(1 << 16):
+        assert is_compressed(instr) == ((instr & 0x3) != 0x3), hex(instr)
+
+
 def test_c_extension_is_a_front_end_plug_in():
     ext = CExtension()
     assert ext.name == "c"

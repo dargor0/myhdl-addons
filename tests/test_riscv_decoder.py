@@ -373,3 +373,178 @@ def test_unselected_decode_extensions_are_zero_overhead():
     dec = InstructionDecoder(registry=reg)
     assert dec.as_dict()["extensions"] == ()
     assert _run([0x0000000B], dec)[0]["illegal"] == 1
+
+
+# -- systematic funct3/funct7 and opcode-legality matrices ------------------
+
+
+def _one(instr, comp=None):
+    return _run([instr], comp)[0]
+
+
+def test_op_funct3_funct7_matrix():
+    expected = {
+        (0, 0x00): ("alu", _ALU["ADD"]),
+        (0, 0x20): ("alu", _ALU["SUB"]),
+        (1, 0x00): ("shift", SLL),
+        (2, 0x00): ("alu", _ALU["SLT"]),
+        (3, 0x00): ("alu", _ALU["SLTU"]),
+        (4, 0x00): ("alu", _ALU["XOR"]),
+        (5, 0x00): ("shift", SRL),
+        (5, 0x20): ("shift", SRA),
+        (6, 0x00): ("alu", _ALU["OR"]),
+        (7, 0x00): ("alu", _ALU["AND"]),
+    }
+    for f3 in range(8):
+        for f7 in (0x00, 0x20, 0x01, 0x40):
+            got = _one(_r(f7, 3, 2, f3, 1))
+            if (f3, f7) in expected:
+                assert got["illegal"] == 0, (f3, f7)
+                kind, value = expected[(f3, f7)]
+                assert got["reg_write"] == 1 and got["alu_b_imm"] == 0
+                if kind == "alu":
+                    assert got["alu_op"] == value and got["shift"] == 0
+                else:
+                    assert got["shift"] == 1 and got["shift_mode"] == value
+            else:
+                assert got["illegal"] == 1, (f3, f7)
+
+
+def test_op_imm_funct3_funct7_matrix():
+    alu = {
+        0: _ALU["ADD"],
+        2: _ALU["SLT"],
+        3: _ALU["SLTU"],
+        4: _ALU["XOR"],
+        6: _ALU["OR"],
+        7: _ALU["AND"],
+    }
+    for f3 in range(8):
+        for f7 in (0x00, 0x20, 0x01, 0x40):
+            got = _one(_i(f7 << 5, 2, f3, 1))
+            if f3 in alu:
+                assert got["illegal"] == 0 and got["alu_op"] == alu[f3]
+                assert got["reg_write"] == 1 and got["alu_b_imm"] == 1
+                assert got["imm_sel"] == _IMM["I"]
+            elif f3 == 1:  # slli: funct7 must be 0
+                assert got["illegal"] == (f7 != 0x00), f7
+                if f7 == 0x00:
+                    assert got["shift"] == 1 and got["shift_mode"] == SLL
+            else:  # f3 == 5: srli / srai
+                if f7 == 0x00:
+                    assert got["illegal"] == 0 and got["shift_mode"] == SRL
+                elif f7 == 0x20:
+                    assert got["illegal"] == 0 and got["shift_mode"] == SRA
+                else:
+                    assert got["illegal"] == 1, f7
+
+
+def test_load_funct3_matrix():
+    for f3 in range(8):
+        got = _one(_i(0, 2, f3, 1, op=0x03))
+        if f3 in (0, 1, 2, 4, 5):
+            assert got["illegal"] == 0 and got["mem_read"] == 1
+            assert got["mem_size"] == (f3 & 0x3)
+            assert got["mem_unsigned"] == (1 if f3 & 0x4 else 0)
+        else:
+            assert got["illegal"] == 1, f3
+
+
+def test_store_funct3_matrix():
+    for f3 in range(8):
+        got = _one(_s(0, 2, 1, f3))
+        if f3 in (0, 1, 2):
+            assert got["illegal"] == 0 and got["mem_write"] == 1
+            assert got["mem_size"] == f3
+        else:
+            assert got["illegal"] == 1, f3
+
+
+def test_branch_funct3_matrix():
+    for f3 in range(8):
+        got = _one(_b(0, 2, 1, f3))
+        if f3 in (0, 1, 4, 5, 6, 7):
+            assert got["illegal"] == 0 and got["branch"] == 1
+            assert got["branch_op"] == f3
+        else:
+            assert got["illegal"] == 1, f3
+
+
+def test_jalr_funct3_matrix():
+    for f3 in range(8):
+        got = _one(_i(0, 2, f3, 1, op=0x67))
+        if f3 == 0:
+            assert got["illegal"] == 0 and got["jump"] == 1 and got["jalr"] == 1
+        else:
+            assert got["illegal"] == 1, f3
+
+
+def test_misc_funct3_matrix():
+    for f3 in range(8):
+        got = _one(0x0F | (f3 << 12))
+        if f3 in (0, 1):
+            assert got["illegal"] == 0 and got["fence"] == 1
+        else:
+            assert got["illegal"] == 1, f3
+
+
+def test_system_encodings():
+    assert _one(0x00000073)["ecall"] == 1
+    assert _one(0x00100073)["ebreak"] == 1
+    for imm in (2, 0x100, 0xFFF):
+        assert _one(_i(imm, 0, 0, 0, op=0x73))["illegal"] == 1, imm
+    for f3 in range(1, 8):  # CSR opcodes are illegal before Zicsr
+        assert _one(_i(0, 0, f3, 0, op=0x73))["illegal"] == 1, f3
+
+
+_KNOWN_OPCODES = {0x37, 0x17, 0x6F, 0x67, 0x63, 0x03, 0x23, 0x13, 0x33, 0x0F, 0x73}
+
+
+def test_unknown_opcodes_illegal():
+    for opc in range(3, 1 << 7, 4):  # low two bits == 0b11
+        if opc in _KNOWN_OPCODES:
+            continue
+        assert _one(opc)["illegal"] == 1, hex(opc)
+
+
+def test_every_compressed_word_is_illegal():
+    instrs = [i for i in range(1 << 16) if (i & 0x3) != 0x3]
+    outputs = _run(instrs)
+    assert all(got["illegal"] == 1 for got in outputs)
+
+
+def test_each_opcode_is_recognized():
+    legal = [
+        _u(0, 1),  # LUI
+        _u(0, 1, op=0x17),  # AUIPC
+        _j(0, 1),  # JAL
+        _i(0, 2, 0, 1, op=0x67),  # JALR
+        _b(0, 2, 1, 0),  # BRANCH
+        _i(0, 2, 2, 1, op=0x03),  # LOAD
+        _s(0, 2, 1, 2),  # STORE
+        _i(0, 2, 0, 1),  # OP-IMM
+        _r(0, 3, 2, 0, 1),  # OP
+        0x0000000F,  # MISC-MEM
+        0x00000073,  # SYSTEM
+    ]
+    for instr in legal:
+        assert _one(instr)["illegal"] == 0, hex(instr)
+
+
+def test_lui_auipc_jal_ignore_funct3():
+    # these formats have no funct3, so any value must still decode
+    for f3 in range(8):
+        assert _one(_u(0x10000, 2) | (f3 << 12))["illegal"] == 0  # LUI
+        assert _one(_u(0, 2, op=0x17) | (f3 << 12))["illegal"] == 0  # AUIPC
+        assert _one(_j(4, 2) | (f3 << 12))["illegal"] == 0  # JAL
+
+
+def test_imm_select_per_class():
+    assert _one(_u(0, 1))["imm_sel"] == _IMM["U"]
+    assert _one(_u(0, 1, op=0x17))["imm_sel"] == _IMM["U"]
+    assert _one(_j(0, 1))["imm_sel"] == _IMM["J"]
+    assert _one(_i(0, 2, 0, 1, op=0x67))["imm_sel"] == _IMM["I"]
+    assert _one(_b(0, 2, 1, 0))["imm_sel"] == _IMM["B"]
+    assert _one(_i(0, 2, 2, 1, op=0x03))["imm_sel"] == _IMM["I"]
+    assert _one(_s(0, 2, 1, 2))["imm_sel"] == _IMM["S"]
+    assert _one(_i(0, 2, 0, 1))["imm_sel"] == _IMM["I"]
