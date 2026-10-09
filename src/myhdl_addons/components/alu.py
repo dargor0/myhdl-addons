@@ -62,11 +62,18 @@ class Alu(ComponentBase):
         reset_signal: ResetSignal | None = None,
     ) -> None:
         p_width = int(check_positive(width, "width"))
-        # NOP is always present and always op 0.
+        # NOP is always present and always op 0.  Keep the canonical
+        # ``AVAIL_OPS`` order so the op codes match the decoder
+        # (``enumerate(AVAIL_OPS)``); ``set`` would make them arbitrary.
         if ops is None:
             p_ops = AVAIL_OPS
         else:
-            p_ops = tuple(["NOP", *[op for op in set(ops) if op != "NOP"]])
+            chosen = list(dict.fromkeys(ops))
+            ordered = [op for op in AVAIL_OPS if op in chosen]
+            ordered += [op for op in chosen if op not in AVAIL_OPS]
+            if "NOP" not in ordered:
+                ordered.insert(0, "NOP")
+            p_ops = tuple(ordered)
         p_flags = AVAIL_FLAGS if flags is None else tuple(set(flags))
         p_registered = bool(registered)
         p_en = bool(en)

@@ -215,6 +215,11 @@ class CoreConfig(configparser.ConfigParser):
         #: Directory used to resolve relative ``init`` paths (CWD unless loaded).
         self._config_dir = Path.cwd()
 
+    @property
+    def config_dir(self) -> Path:
+        """Directory used to resolve relative ``init`` paths (``RC-FR-109``)."""
+        return self._config_dir
+
     def getint(
         self,
         section: str,

@@ -43,9 +43,10 @@ cfg = CoreConfig.from_mapping(
 )
 ```
 
-Ready-made example files ship outside the package source: `config/riscv_minimal.ini`
-and `config/riscv_example.ini` (the latter loads the demo image
-`share/riscv_firmware.hex`).
+Ready-made example files ship outside the package source: `config/riscv_minimal.ini`,
+`config/riscv_example.ini` (loads the demo image `share/riscv_firmware.hex`) and
+`config/riscv_tests.ini` (loads the example ISA test `share/riscv_isa_test.hex`,
+which writes pass to `tohost`).
 
 The full INI file schema (sections, keys, defaults, validation and a complete
 example) is in [`CONFIG.md`](CONFIG.md).
@@ -79,11 +80,62 @@ except RiscvConfigError as exc:
 |---|---|
 | `config` | `CoreConfig` (a `ConfigParser` subclass) with `regions`/`buses`/`extensions`/`isa_string`/`misa` properties, `validate()`, and the allowed-value constants |
 | `errors` | `RiscvError`, `RiscvConfigError`, `RiscvTypeError` |
+| `extensions` | `Extension` / `ExtensionRegistry` — the ISA plug-in mechanism |
+| `rvc` | `RvcDecompressor` and the `CExtension` front-end plug-in |
+| `fetch` | `FetchUnit` — instruction front-end (buffer/refill, straddle, waits) |
+| `immgen` | `ImmGen` — I/S/B/U/J immediate generation |
+| `decoder` | `InstructionDecoder` / control unit |
+| `branch` | `BranchUnit` and `jalr_target` |
+| `lsu` | `LoadStoreUnit` — load/store sizes, extension, byte strobes |
+| `pc` | `ProgramCounter` — sequential advance, load and link values |
+| `router` | `MemoryRouter` — address-region map, fetch/data clients, internal memories |
+| `busmaster` | `BusMaster` — two Q31 clients arbitrated onto one Wishbone master |
+| `core` | `RiscvCore` — assembled non-pipelined RV32I core (multi-cycle) |
+| `iss` | `RV32ICIss` — plain-Python architectural golden model (simulation-only) |
+| `sim` | simulation-only testbench helpers: `MemoryImage` (ELF32/`.hex`), `MemoryBfm`, `SignatureChecker` |
+| `tohost` | `ToHost` — `tohost`/`fromhost` interception and halt |
 
-The RTL blocks — decoder/control unit, RVC decompressor, immediate generator,
-fetch unit, load/store unit, CSRs, memory fabric and the assembled
-`RiscvCore` — are added incrementally, each with its own tests and a
-Verilog/VHDL conversion check.
+Every synthesizable block has unit, Verilog/VHDL conversion, cosim and
+synthesis tests. The `RiscvCore` assembles them into a working RV32IC machine
+and passes a per-retire differential against the Python ISS; the CSRs are added
+as a later extension.
+
+## Running the ISA tests (L1)
+
+`tests/test_riscv_l1.py` always runs the example ISA test
+(`config/riscv_tests.ini`). It additionally runs the `riscv-tests`
+`rv32ui`/`rv32uc` suites when their prebuilt ELFs are available; otherwise it
+skips. The reference toolchain is the xPack **`riscv-none-elf-gcc`**.
+
+Build the suite on Ubuntu:
+
+```sh
+# 1. Toolchain (xPack GNU RISC-V Embedded GCC, linux-x64).
+#    Pick a release from
+#    https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack/releases
+VER=14.2.0-3
+curl -L -o /tmp/riscv-none-elf.tar.gz \
+  "https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack/releases/download/v$VER/xpack-riscv-none-elf-gcc-$VER-linux-x64.tar.gz"
+mkdir -p "$HOME/opt" && tar -xzf /tmp/riscv-none-elf.tar.gz -C "$HOME/opt"
+export PATH="$HOME/opt/xpack-riscv-none-elf-gcc-$VER/bin:$PATH"
+#    (or: sudo apt install gcc-riscv64-unknown-elf  and use that prefix below)
+
+# 2. Build riscv-tests (produces isa/rv32ui-p-* and isa/rv32uc-p-*).
+git clone https://github.com/riscv-software-src/riscv-tests
+cd riscv-tests
+git submodule update --init --recursive
+autoconf
+RISCV_PREFIX=riscv-none-elf- ./configure    # or riscv64-unknown-elf-
+make
+export RISCV_TESTS_DIR="$PWD/isa"
+
+# 3. Run.
+scripts/run_tests.sh 85 tests/test_riscv_l1.py
+```
+
+`RISCV_TESTS_DIR` must contain the built `rv32ui-p-*` / `rv32uc-p-*` ELFs (the
+runner reads each ELF's entry and `tohost`/`fromhost` symbols and checks the
+`tohost` signature).
 
 ## See also
 

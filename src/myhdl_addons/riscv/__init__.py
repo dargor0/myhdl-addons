@@ -28,18 +28,32 @@ from .config import (
     MISA_BITS,
     CoreConfig,
 )
+from .busmaster import BusMaster
+from .core import RiscvCore
 from .decoder import InstructionDecoder
 from .errors import RiscvConfigError, RiscvError, RiscvTypeError
 from .extensions import Extension, ExtensionRegistry
+from .fetch import FetchUnit
 from .immgen import AVAIL_IMM_TYPES, ImmGen
+from .iss import CAUSE, Retire, RV32ICIss
 from .lsu import LoadStoreUnit
 from .pc import ProgramCounter
+from .router import MemoryRouter
 from .rvc import (
     CExtension,
     RvcDecompressor,
     decompress,
     default_registry,
     is_compressed,
+)
+from .sim import (
+    MemoryBfm,
+    MemoryImage,
+    Signature,
+    SignatureChecker,
+    contents_from_config,
+    decode_signature,
+    elf_symbols,
 )
 from .tohost import ToHost
 
@@ -57,20 +71,34 @@ __all__ = [
     "AVAIL_PIPELINE_STAGES",
     "MISA_BITS",
     "BranchUnit",
+    "BusMaster",
+    "CAUSE",
     "CExtension",
     "CoreConfig",
     "Extension",
     "ExtensionRegistry",
+    "FetchUnit",
     "ImmGen",
     "InstructionDecoder",
     "LoadStoreUnit",
+    "MemoryBfm",
+    "MemoryImage",
+    "MemoryRouter",
     "ProgramCounter",
+    "RV32ICIss",
+    "Retire",
     "RiscvConfigError",
+    "RiscvCore",
     "RiscvError",
     "RiscvTypeError",
     "RvcDecompressor",
+    "Signature",
+    "SignatureChecker",
     "ToHost",
+    "contents_from_config",
+    "decode_signature",
     "decompress",
+    "elf_symbols",
     "default_registry",
     "is_compressed",
     "jalr_target",
